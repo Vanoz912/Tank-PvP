@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <title>Battle City 1990 — PvP Танки онлайн (WebRTC)</title>
+  
+  <!-- Retro 8-bit Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Rajdhani:wght@600;700&display=swap" rel="stylesheet" />
+  
+  <!-- CSS Stylesheet -->
+  <link rel="stylesheet" href="style.css?v=20261011_v17" />
+  <style>
+    html, body {
+      overflow-y: auto !important;
+      height: auto !important;
+    }
+    #mechanicsScreen {
+      max-width: min(860px, 96vw) !important;
+      height: auto !important;
+      max-height: none !important;
+      overflow: visible !important;
+    }
+    #mechanicsScreen .editor-header {
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      background: #1a1e24;
+      padding: 6px 0 10px 0;
+      border-bottom: 1px solid #2c3e50;
+    }
+    .mechanics-catalog,
+    .mechanics-catalog.compact,
+    .mechanics-details,
+    .mechanics-details-body,
+    .mechanics-rarity-details,
+    .mechanics-rarity-body,
+    .mechanics-section {
+      display: block !important;
+      height: auto !important;
+      max-height: none !important;
+      overflow: visible !important;
+      flex-shrink: 0 !important;
+    }
+    .mechanics-section {
+      padding: 0 !important;
+    }
+    .mechanics-section-title {
+      margin-bottom: 0 !important;
+      border-bottom: none !important;
+    }
+  </style>
+
+  <!-- PeerJS CDN for Serverless WebRTC Multiplayer -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body class="crt">
+
+  <div class="container">
+    
+    <!-- Top utility bar -->
+    <div class="top-toolbar">
+      <div id="connectionPill" class="badge-status">⚪ ОФЛАЙН</div>
+      <div id="stealthStatusPill" class="stealth-status hidden">🔒 ВОРОГ В УКРИТТІ</div>
+      <div class="toolbar-actions">
+        <button id="btnSurrender" class="btn btn-tool btn-surrender hidden">🏳️ ЗДАТИСЬ</button>
+        <button id="btnMenu" class="btn btn-tool hidden">🏠 В МЕНЮ</button>
+        <button id="btnToggleSound" class="btn btn-tool">🔊 ЗВУК: УВІМК</button>
+      </div>
+    </div>
+
+    <header>
+      <h1 class="game-title">BATTLE CITY 1990</h1>
+      <div class="game-subtitle">PvP MULTIPLAYER • РЕДАКТОР КАРТ • ВОДА & СТЕЛС</div>
+    </header>
+
+    <!-- ==================== LOBBY SCREEN ==================== -->
+    <div id="lobbyScreen" class="card">
+      <div id="lobbyInitialView">
+        <p style="font-size: 9px; color: #bdc3c7; line-height: 1.8; margin-bottom: 14px;">
+          PvP танчики без серверів: пряме WebRTC P2P з'єднання, тактичний редактор власних карт і динамічні блоки.
+        </p>
+
+        <!-- Host Map & Win Score Selection Row + Map Preview -->
+        <div class="loadout-row" style="margin-bottom: 6px; align-items: stretch;">
+          <div class="loadout-col" style="flex: 1.5;">
+            <label for="selectHostMap" class="form-label">🗺️ ОБЕРІТЬ КАРТУ ДЛЯ БОЮ:</label>
+            <select id="selectHostMap" class="select-field"></select>
+            <label for="selectHostWinScore" class="form-label" style="margin-top: 8px;">🏆 ДО СКІЛЬКОХ ПЕРЕМОГ:</label>
+            <select id="selectHostWinScore" class="select-field"></select>
+          </div>
+          <div class="map-preview-box">
+            <canvas id="hostMapPreviewCanvas" class="map-preview-canvas" width="150" height="150"></canvas>
+            <div class="map-preview-caption">Прев'ю карти</div>
+          </div>
+        </div>
+
+        <!-- Tank Loadout Selection (Hull & Turret) -->
+        <div class="loadout-selection-box">
+          <div class="loadout-header">⚙️ СПОРЯДЖЕННЯ ВАШОГО ТАНКА (ГРАВЕЦЬ 1):</div>
+          <div class="loadout-row">
+            <div class="loadout-col">
+              <label for="selectHull" class="form-label">🛡️ КОРПУС:</label>
+              <select id="selectHull" class="select-field loadout-select"></select>
+              <div id="hostHullStatsDesc" class="loadout-stats-desc"></div>
+            </div>
+            <div class="loadout-col">
+              <label for="selectTurret" class="form-label">💥 ДУЛО (ВЕЖА):</label>
+              <select id="selectTurret" class="select-field loadout-select"></select>
+              <div id="hostTurretStatsDesc" class="loadout-stats-desc"></div>
+            </div>
+          </div>
+        </div>
+
+        <button id="btnHostGame" class="btn btn-create">
+          ⚔️ СТВОРИТИ ГРУ (ХОСТ)
+        </button>
+
+        <button id="btnOpenEditor" class="btn btn-editor-open">
+          🛠️ РЕДАКТОР КАРТ
+        </button>
+
+        <button id="btnOpenMechanics" class="btn btn-mechanics-open">
+          📖 МЕХАНІКИ ГРИ
+        </button>
+
+        <button id="btnStartTestMode" class="btn btn-test-mode">
+          🧪 ЗОНА ТЕСТУВАННЯ (ПОЛІГОН)
+        </button>
+
+        <div class="divider">АБО ПРИЄДНАТИСЯ ВРУЧНУ</div>
+
+        <div class="join-form">
+          <input type="text" id="inputRoomId" class="input-field" placeholder="ID кімнати або посилання" />
+          <button id="btnJoinGame" class="btn btn-join">
+            🔗 ВХІД
+          </button>
+        </div>
+      </div>
+
+      <!-- Host Waiting View -->
+      <div id="lobbyHostView" class="hidden">
+        <h3 style="color: #f39c12; font-size: 13px; margin-bottom: 10px;">КІМНАТА ГОТОВА!</h3>
+        <p style="font-size: 9px; color: #bdc3c7; line-height: 1.6;">
+          Надішліть це посилання другу. Він обере танк та підключиться до бою:
+        </p>
+
+        <div class="link-box">
+          <input type="text" id="shareLinkInput" class="link-input" readonly />
+          <button id="btnCopyLink" class="btn btn-copy">📋 КОПІЮВАТИ</button>
+        </div>
+
+        <div>
+          <span style="font-size: 9px; color: #7f8c8d;">ID кімнати: </span>
+          <span id="displayRoomId" class="room-badge">...</span>
+          <button id="btnCopyId" class="btn btn-tool" style="margin-left: 6px;">КОПІЮВАТИ ID</button>
+        </div>
+
+        <div class="status-text">
+          ⏳ ОЧІКУВАННЯ ПІДКЛЮЧЕННЯ ДРУГОГО ГРАВЦЯ...
+        </div>
+
+        <div style="margin-top: 14px;">
+          <button id="btnHostBackToMenu" class="btn btn-tool">🏠 В ГОЛОВНЕ МЕНЮ</button>
+        </div>
+      </div>
+
+      <!-- Guest Setup View (Allows Player 2 to pick Map, Hull and Turret BEFORE match begins) -->
+      <div id="lobbyGuestSetupView" class="hidden">
+        <h3 style="color: #2ecc71; font-size: 13px; margin-bottom: 8px;">⚔️ ПІДГОТОВКА ДО БОЮ (ГРАВЕЦЬ 2)</h3>
+        <p style="font-size: 9px; color: #bdc3c7; line-height: 1.6; margin-bottom: 12px;">
+          Ви підключаєтесь до кімнати: <span id="guestDisplayRoomId" class="room-badge">...</span><br>
+          Оберіть карту, свій тип корпусу та дула перед початком матчу:
+        </p>
+
+        <div class="loadout-row" style="margin-bottom: 8px; align-items: stretch;">
+          <div class="loadout-col" style="flex: 1.5;">
+            <label for="selectGuestMap" class="form-label">🗺️ ОБЕРІТЬ КАРТУ (АБО КАРТУ ХОСТА):</label>
+            <select id="selectGuestMap" class="select-field"></select>
+          </div>
+          <div class="map-preview-box">
+            <canvas id="guestMapPreviewCanvas" class="map-preview-canvas" width="140" height="140"></canvas>
+            <div class="map-preview-caption">Прев'ю карти</div>
+          </div>
+        </div>
+
+        <div class="loadout-selection-box" style="border-color: #2ecc71;">
+          <div class="loadout-header" style="color: #2ecc71;">⚙️ СПОРЯДЖЕННЯ ВАШОГО ТАНКА (ГРАВЕЦЬ 2):</div>
+          <div class="loadout-row">
+            <div class="loadout-col">
+              <label for="selectGuestHull" class="form-label">🛡️ КОРПУС:</label>
+              <select id="selectGuestHull" class="select-field loadout-select"></select>
+              <div id="guestHullStatsDesc" class="loadout-stats-desc" style="border-left-color: #2ecc71;"></div>
+            </div>
+            <div class="loadout-col">
+              <label for="selectGuestTurret" class="form-label">💥 ДУЛО (ВЕЖА):</label>
+              <select id="selectGuestTurret" class="select-field loadout-select"></select>
+              <div id="guestTurretStatsDesc" class="loadout-stats-desc" style="border-left-color: #2ecc71;"></div>
+            </div>
+          </div>
+        </div>
+
+        <button id="btnGuestReadyJoin" class="btn btn-create" style="background: #27ae60; box-shadow: 4px 4px 0 #000; margin-top: 4px;">
+          ⚔️ ГОТОВИЙ ДО БОЮ (ПРИЄДНАТИСЯ)
+        </button>
+
+        <div style="margin-top: 12px;">
+          <button id="btnGuestCancel" class="btn btn-tool">🏠 В ГОЛОВНЕ МЕНЮ</button>
+        </div>
+      </div>
+
+      <!-- Guest Connecting View -->
+      <div id="lobbyGuestView" class="hidden">
+        <h3 style="color: #2ecc71; font-size: 13px; margin-bottom: 10px;">ПІДКЛЮЧЕННЯ ДО ХОСТА...</h3>
+        <div class="status-text" id="guestStatusLabel">
+          🔄 Встановлюємо прямий WebRTC DataChannel канал...
+        </div>
+        <div style="margin-top: 14px;">
+          <button id="btnGuestConnectingCancel" class="btn btn-tool">🏠 В ГОЛОВНЕ МЕНЮ</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== GAME MECHANICS SCREEN (MAIN MENU) ==================== -->
+    <div id="mechanicsScreen" class="card hidden">
+      <div class="editor-header">
+        <h3 style="color: #00d2d3; font-size: 13px;">📖 МЕХАНІКИ ГРИ (БЛОКИ ТА ЗДІБНОСТІ)</h3>
+        <button id="btnMechanicsBack" class="btn btn-tool">🏠 НАЗАД В МЕНЮ</button>
+      </div>
+      <p style="font-size: 8.5px; color: #bdc3c7; line-height: 1.65; text-align: left; margin-bottom: 12px;">
+        Матч триває до обраної кількості перемог (<b>від 3 до 15</b>). Після кожного раунду гравець, який програв раунд, обирає здібність. Натискайте на заголовки розділів або рідкостей нижче, щоб згортати та розгортати списки:
+      </p>
+      <div id="mechanicsCatalogContainer" class="mechanics-catalog"></div>
+    </div>
+
+    <!-- ==================== MAP EDITOR SCREEN ==================== -->
+    <div id="editorScreen" class="card hidden">
+      <div class="editor-header">
+        <h3 style="color: #8e44ad; font-size: 13px;">🛠️ РЕДАКТОР КАРТ</h3>
+        <button id="btnEditorBack" class="btn btn-tool">🏠 НАЗАД В МЕНЮ</button>
+      </div>
+
+      <!-- Grid Size Controls -->
+      <div class="editor-controls-row">
+        <div class="size-control">
+          <span>Ширина:</span>
+          <input type="number" id="editorWidth" class="size-input" min="10" max="30" value="15" />
+          <span>Висота:</span>
+          <input type="number" id="editorHeight" class="size-input" min="10" max="30" value="15" />
+        </div>
+        <button id="btnEditorResize" class="btn btn-tool">🔄 ЗМІНИТИ / ОЧИСТИТИ</button>
+      </div>
+
+      <!-- Dynamic Palette Container (Populated from BLOCK_DEFINITIONS + Spawns) -->
+      <div id="editorPalette" class="palette-container"></div>
+
+      <!-- Editor Canvas Area -->
+      <div class="editor-canvas-wrapper">
+        <canvas id="editorCanvas" width="600" height="600"></canvas>
+      </div>
+
+      <!-- Map Name & Save Actions -->
+      <div class="editor-save-row">
+        <input type="text" id="editorMapName" class="input-field" placeholder="Введіть назву карти..." maxlength="24" />
+        <button id="btnSaveMap" class="btn btn-join">💾 ЗБЕРЕГТИ КАРТУ</button>
+      </div>
+
+      <!-- Saved Maps List -->
+      <div class="editor-maps-list">
+        <div style="font-size: 9px; color: #f39c12; margin-bottom: 8px;">📂 ЗБЕРЕЖЕНІ КАРТИ У ПАМ'ЯТІ:</div>
+        <div id="editorSavedMapsList"></div>
+      </div>
+    </div>
+
+    <!-- ==================== GAME SCREEN ==================== -->
+    <div id="gameScreen" class="hidden">
+      <!-- Панель керування Зоною Тестування (Полігоном) -->
+      <div id="testModePanel" class="test-mode-panel hidden">
+        <div class="test-mode-quickbar">
+          <span id="testActivePlayerBadge" class="test-player-badge p1-active">🎮 КЕРУЄТЕ: ГРАВЕЦЬ 1 (ЖОВТИЙ)</span>
+          <div class="test-quickbar-actions">
+            <button id="btnTestSwitchPlayer" type="button" class="btn btn-tool test-btn-switch">🔄 ПЕРЕМКНУТИ ГРАВЦЯ (P1 ↔ P2) [Tab]</button>
+            <button id="btnTestHealBoth" type="button" class="btn btn-tool test-btn-heal">❤️ ВІДНОВИТИ HP / КУЛДАУНИ</button>
+            <button id="btnTestResetMap" type="button" class="btn btn-tool">🧱 ВІДНОВИТИ КАРТУ</button>
+            <button id="btnTestTogglePerks" type="button" class="btn btn-tool test-btn-perks">✨ ЗДІБНОСТІ ТА СПОРЯДЖЕННЯ ▼</button>
+          </div>
+        </div>
+
+        <!-- Розкладна панель вибору здібностей та корпусу/дула для Гравця 1 і Гравця 2 -->
+        <div id="testPerkManagerBox" class="test-perk-manager">
+          <div class="test-target-row">
+            <div class="test-target-tabs">
+              <button id="btnTestTargetP1" type="button" class="btn btn-tool test-target-btn active-p1">🟡 Налаштувати: ГРАВЕЦЬ 1</button>
+              <button id="btnTestTargetP2" type="button" class="btn btn-tool test-target-btn">🟢 Налаштувати: ГРАВЕЦЬ 2</button>
+            </div>
+            <button id="btnTestClearTargetPerks" type="button" class="btn btn-tool test-btn-clear">🧹 Скинути здібності гравця</button>
+          </div>
+
+          <div class="loadout-row test-loadout-row">
+            <div class="loadout-col">
+              <label for="selectTestHull" class="form-label">🛡️ КОРПУС ОБРАНОГО ГРАВЦЯ:</label>
+              <select id="selectTestHull" class="select-field loadout-select"></select>
+            </div>
+            <div class="loadout-col">
+              <label for="selectTestTurret" class="form-label">💥 ДУЛО ОБРАНОГО ГРАВЦЯ:</label>
+              <select id="selectTestTurret" class="select-field loadout-select"></select>
+            </div>
+          </div>
+
+          <div class="test-perk-search-row">
+            <input type="text" id="testPerkSearchInput" class="input-field test-perk-search-input" placeholder="🔍 Пошук здібності за назвою або описом..." autocomplete="off" />
+          </div>
+
+          <div id="testPerksCatalog" class="test-perks-catalog"></div>
+        </div>
+      </div>
+
+      <!-- HUD Header -->
+      <div class="hud">
+        <div class="player-tag p1">
+          <svg class="tank-icon" viewBox="0 0 32 32">
+            <rect x="4" y="6" width="6" height="20" fill="#333" />
+            <rect x="22" y="6" width="6" height="20" fill="#333" />
+            <rect x="9" y="8" width="14" height="16" fill="#f39c12" />
+            <circle cx="16" cy="16" r="4" fill="#e67e22" />
+            <rect x="14" y="2" width="4" height="10" fill="#f39c12" />
+          </svg>
+          <div>
+            <div id="labelP1">ГРАВЕЦЬ 1</div>
+            <div class="kills-pips" id="pipsP1">
+              <div class="pip"></div><div class="pip"></div><div class="pip"></div><div class="pip"></div><div class="pip"></div>
+            </div>
+          </div>
+          <span id="scoreP1" class="score-badge">0</span>
+        </div>
+
+        <div class="target-score">
+          <span id="hudTargetScoreText">ДО 5 ПЕРЕМОГ</span><br>
+          <span id="hudMapName" style="color: #f1c40f;">КЛАСИЧНА</span>
+        </div>
+
+        <div class="player-tag p2">
+          <span id="scoreP2" class="score-badge">0</span>
+          <div>
+            <div id="labelP2" style="text-align: right;">ГРАВЕЦЬ 2</div>
+            <div class="kills-pips" id="pipsP2" style="justify-content: flex-end;">
+              <div class="pip"></div><div class="pip"></div><div class="pip"></div><div class="pip"></div><div class="pip"></div>
+            </div>
+          </div>
+          <svg class="tank-icon" viewBox="0 0 32 32">
+            <rect x="4" y="6" width="6" height="20" fill="#333" />
+            <rect x="22" y="6" width="6" height="20" fill="#333" />
+            <rect x="9" y="8" width="14" height="16" fill="#2ecc71" />
+            <circle cx="16" cy="16" r="4" fill="#27ae60" />
+            <rect x="14" y="2" width="4" height="10" fill="#2ecc71" />
+          </svg>
+        </div>
+      </div>
+
+      <!-- Battlefield Stage: Left Passive Sidebar + Center Canvas + Right Active Sidebar -->
+      <div class="battlefield-stage">
+        <!-- ЗЛІВА ВІД ПОЛЯ БОЮ (ЧЕРВОНА ЗОНА): Пасивні здібності -->
+        <aside id="passivePerksSidebar" class="perks-sidebar passive-sidebar" aria-label="Пасивні здібності">
+          <div class="sidebar-header passive-header">🛡️ ПАСИВНІ ЗДІБНОСТІ</div>
+          <div id="passivePerksList" class="sidebar-perks-list"></div>
+        </aside>
+
+        <!-- Canvas Area (Frame matches canvas exactly) -->
+        <div class="canvas-wrapper">
+          <canvas id="gameCanvas" width="640" height="640"></canvas>
+
+          <!-- Local Player HUD Health Bar (Hidden on Tanks, Shown in HUD) -->
+          <div class="player-hp-bar-container" id="playerHpContainer">
+            <div class="hp-info-row">
+              <span class="hp-badge" id="hudPlayerRoleBadge">🛡️ ВАШ ТАНК</span>
+              <div class="hp-stats-group">
+                <span class="hp-text-label" id="hudHpText">HP: 100 / 100</span>
+                <span class="hp-armor-badge" id="hudArmorBadge">🛡️ Броня: 20%</span>
+                <span class="hp-ammo-badge" id="hudAmmoBadge">🔫 Кулі: 10 / 10</span>
+                <span class="hp-mines-badge hidden" id="hudMinesBadge">💣 Міни: 3 / 3</span>
+                <span class="hp-smoke-badge hidden" id="hudSmokeBadge">💨 Дим: ГОТОВО</span>
+                <span class="hp-artillery-badge hidden" id="hudArtilleryBadge">🚀 Арта: ГОТОВО</span>
+                <span class="hp-active-switch-badge hidden" id="hudActiveSwitchHint">🔄 [Q/E]</span>
+                <span class="hp-repair-badge hidden" id="hudRepairBadge">🔧 Рем: 1 / 1 [H]</span>
+                <span class="hp-rebirth-badge hidden" id="hudRebirthBadge">🔥 Життя: +1</span>
+              </div>
+            </div>
+            <div class="hp-bar-track">
+              <div class="hp-bar-fill" id="hudHpFill" style="width: 100%;"></div>
+            </div>
+            <div class="hp-bottom-stats-row" id="hudPlayerStatsRow">
+              <span class="hp-stat-item" id="hudStatDamage">⚔️ Шкода: 15-20</span>
+              <span class="hp-stat-item" id="hudStatFireRate">🔥 Скоростр.: 1.54/с (0.65с)</span>
+              <span class="hp-stat-item" id="hudStatSpeed">⚡ Швидкість: 2</span>
+              <span class="hp-stat-item" id="hudStatBulletSpeed">🚀 Шв. снаряду: 6.5</span>
+              <span class="hp-stat-item" id="hudStatFov">👁️ Огляд: 90°</span>
+            </div>
+          </div>
+
+          <!-- Post-Round Perk Selection Overlay -->
+          <div id="perkSelectionOverlay" class="overlay perk-overlay hidden">
+            <!-- Вигляд для гравця, який програв раунд (вибирає здібність) -->
+            <div id="perkLoserView" class="perk-view">
+              <h2 id="perkModalTitle" class="perk-modal-title">⚡ ОБЕРІТЬ 1 З 3 ЗДІБНОСТЕЙ</h2>
+              <p id="perkModalSubtitle" class="perk-modal-subtitle">Ви поступилися у раунді — оберіть бонус для підсилення танка до кінця матчу:</p>
+              <div id="perkCardsContainer" class="perk-cards-grid"></div>
+              <div id="perkRerollContainer" class="perk-reroll-row hidden">
+                <button id="btnRerollPerks" class="btn btn-reroll">🎲 РЕРОЛ ЗДІБНОСТЕЙ (1)</button>
+              </div>
+            </div>
+
+            <!-- Вигляд для гравця, який виграв раунд (очікування) -->
+            <div id="perkWinnerWaitView" class="perk-view perk-wait-view hidden">
+              <div class="perk-wait-spinner">⏳</div>
+              <h2 class="perk-wait-title">РАУНД ЗА ВАМИ!</h2>
+              <p class="perk-wait-desc">Зачекайте, супротивник вибирає здібність...</p>
+            </div>
+          </div>
+
+          <!-- Game Over & Mutual Rematch Modal Overlay -->
+          <div id="gameOverOverlay" class="overlay rematch-overlay hidden">
+            <h2 id="winnerTitle" style="color: #f1c40f;">ПЕРЕМОГА!</h2>
+            <p id="winnerDesc">Гравець здобув 5 перемог і розбив танк суперника.</p>
+
+            <!-- Статус готовності обох гравців до реваншу -->
+            <div class="rematch-status-panel">
+              <div class="rematch-players-row">
+                <div id="rematchStatusP1" class="rematch-player-pill">⏳ Гравець 1: Роздумує...</div>
+                <div id="rematchStatusP2" class="rematch-player-pill">⏳ Гравець 2: Роздумує...</div>
+              </div>
+              <div id="rematchPromptBanner" class="rematch-prompt-banner">
+                Оберіть карту, кількість перемог або змініть корпус/дуло та натисніть «Реванш»!
+              </div>
+            </div>
+
+            <!-- Налаштування карти, кількості перемог та спорядження під час реваншу -->
+            <div class="rematch-setup-box">
+              <div class="loadout-row rematch-map-row" style="align-items: stretch;">
+                <div class="loadout-col" style="flex: 1.5;">
+                  <label for="selectRematchMap" class="form-label">🗺️ КАРТА НА РЕВАНШ:</label>
+                  <select id="selectRematchMap" class="select-field loadout-select"></select>
+                  <label for="selectRematchWinScore" class="form-label" style="margin-top: 8px;">🏆 ДО СКІЛЬКОХ ПЕРЕМОГ:</label>
+                  <select id="selectRematchWinScore" class="select-field loadout-select"></select>
+                </div>
+                <div class="map-preview-box rematch-map-preview-box">
+                  <canvas id="rematchMapPreviewCanvas" class="map-preview-canvas" width="130" height="130"></canvas>
+                  <div class="map-preview-caption">Прев'ю карти</div>
+                </div>
+              </div>
+              <div class="loadout-row" style="margin-top: 8px;">
+                <div class="loadout-col">
+                  <label for="selectRematchHull" class="form-label">🛡️ ВАШ КОРПУС:</label>
+                  <select id="selectRematchHull" class="select-field loadout-select"></select>
+                </div>
+                <div class="loadout-col">
+                  <label for="selectRematchTurret" class="form-label">💥 ВАШЕ ДУЛО:</label>
+                  <select id="selectRematchTurret" class="select-field loadout-select"></select>
+                </div>
+              </div>
+              <div id="rematchLoadoutStatsDesc" class="loadout-stats-desc"></div>
+            </div>
+
+            <div class="overlay-actions">
+              <button id="btnRematch" class="btn btn-create">
+                🔄 ХОЧУ РЕВАНШ (ГРАТИ ЗНОВУ)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- СПРАВА ВІД ПОЛЯ БОЮ (ЗЕЛЕНА ЗОНА): Активні здібності -->
+        <aside id="activePerksSidebar" class="perks-sidebar active-sidebar" aria-label="Активні здібності">
+          <div class="sidebar-header active-header">⚡ АКТИВНІ ЗДІБНОСТІ</div>
+          <div id="activeSwitchHintBanner" class="sidebar-switch-banner hidden">🔄 Перемикання [ПРОБІЛ]: клавіші Q / E</div>
+          <div id="activePerksList" class="sidebar-perks-list"></div>
+        </aside>
+      </div>
+
+      <!-- Mobile Touch Controls -->
+      <div class="mobile-controls">
+        <div class="dpad">
+          <div></div>
+          <button class="dpad-btn" id="mUp">▲</button>
+          <div></div>
+          <button class="dpad-btn" id="mLeft">◀</button>
+          <div></div>
+          <button class="dpad-btn" id="mRight">▶</button>
+          <div></div>
+          <button class="dpad-btn" id="mDown">▼</button>
+          <div></div>
+        </div>
+        <button class="fire-btn" id="mFire">FIRE</button>
+      </div>
+
+      <!-- 2 Expandable Description Windows (Controls & Game Mechanics) -->
+      <div class="info-accordions-wrapper">
+        <!-- Вікно 1: Керування -->
+        <details class="info-accordion">
+          <summary class="info-accordion-header">
+            <span>🎮 КЕРУВАННЯ</span>
+            <span class="accordion-arrow">▼</span>
+          </summary>
+          <div class="info-accordion-body">
+            <div class="info-line">
+              🚗 <b>Рух корпусу:</b> <span class="key-badge">W</span> (вперед), <span class="key-badge">S</span> (назад), <span class="key-badge">A</span> / <span class="key-badge">D</span> (поворот корпусу)
+            </div>
+            <div class="info-line">
+              🎯 <b>Прицілювання вежею:</b> <span class="key-badge">МИША</span> — штрих-пунктирна лінія веде від танка до точки прицілу
+            </div>
+            <div class="info-line">
+              🔥 <b>Постріл:</b> Тільки <span class="key-badge">ЛКМ</span> (Ліва кнопка миші — можна <b>затиснути</b> для безперервної стрільби, працює навіть поза межами поля)
+            </div>
+            <div class="info-line">
+              🔄 <b>Перезарядка касети:</b> <span class="key-badge">R</span> (англійська клавіша R) — дострокова перезарядка обойми навіть коли в касеті ще залишилися снаряди.
+            </div>
+            <div class="info-line">
+              💣💨 <b>Активні здібності (Міни / Дим):</b> <span class="key-badge">ПРОБІЛ</span> — використовує обрану активну здібність (встановлює міну або випускає димову завісу 3×3 на 5с). Якщо є обидві активки — перемикання між ними на клавіші <span class="key-badge">Q</span> / <span class="key-badge">E</span>.
+            </div>
+            <div class="info-line">
+              🔧 <b>Ремкомплект (при наявності здібності):</b> <span class="key-badge">H</span> (англійська клавіша H) — миттєво відновлює 20% від максимального HP (оновлюється щораунду).
+            </div>
+          </div>
+        </details>
+
+        <!-- Вікно 2: Опис механік (Блоки та здібності — оновлюється автоматично з реєстру) -->
+        <details class="info-accordion">
+          <summary class="info-accordion-header">
+            <span>⚙️ ОПИС МЕХАНІК (БЛОКИ ТА ЗДІБНОСТІ)</span>
+            <span class="accordion-arrow">▼</span>
+          </summary>
+          <div class="info-accordion-body">
+            <div id="inGameMechanicsCatalog" class="mechanics-catalog compact"></div>
+          </div>
+        </details>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Фіксована панель телеметрії (FPS та PING) у лівому нижньому куті браузера поза ігровим полем -->
+  <div id="telemetryPanel" class="telemetry-panel">
+    <span class="telemetry-item">FPS: <b id="telemetryFps" class="telemetry-val fps-good">60</b></span>
+    <span class="telemetry-sep">|</span>
+    <span class="telemetry-item">PING: <b id="telemetryPing" class="telemetry-val ping-local">0 мс</b></span>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast">📋 Скопійовано!</div>
+
+  <!-- Game Scripts (Native ES Modules without bundlers) -->
+  <script type="module" src="game.js?v=20261011_v17"></script>
+</body>
+</html>
+
