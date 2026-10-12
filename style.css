@@ -1,0 +1,2506 @@
+:root {
+  --bg-color: #0b0c10;
+  --panel-bg: #1a1e24;
+  --accent-p1: #f39c12; /* Golden Yellow Tank (P1) */
+  --accent-p2: #2ecc71; /* Forest Green Tank (P2) */
+  --retro-red: #e74c3c;
+  --brick-color: #b84418;
+  --steel-color: #bdc3c7;
+  --water-color: #0984e3;
+  --font-arcade: 'Press Start 2P', monospace, sans-serif;
+  --font-ui: 'Rajdhani', sans-serif;
+
+  /* Динамічні розміри вікна під розмір карти (10x10 - 30x30) */
+  --container-max-width: 680px;
+  --game-max-width: 640px;
+  --editor-max-width: 760px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: #ecf0f1;
+  font-family: var(--font-arcade);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background-image: 
+    radial-gradient(circle at 50% 15%, rgba(243, 156, 18, 0.08) 0%, transparent 60%),
+    radial-gradient(circle at 80% 85%, rgba(46, 204, 113, 0.08) 0%, transparent 60%);
+}
+
+/* Scanline retro effect */
+.crt::after {
+  content: " ";
+  display: block;
+  position: fixed;
+  top: 0; left: 0; bottom: 0; right: 0;
+  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.2) 50%);
+  background-size: 100% 4px;
+  z-index: 100;
+  pointer-events: none;
+  opacity: 0.65;
+}
+
+.container {
+  width: 100%;
+  max-width: var(--container-max-width, 680px);
+  padding: 12px;
+  margin: auto 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  z-index: 10;
+  transition: max-width 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Top utility bar */
+.top-toolbar {
+  width: 100%;
+  max-width: var(--game-max-width, 640px);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  gap: 8px;
+  transition: max-width 0.25s ease;
+}
+
+.badge-status {
+  font-size: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: #2c3e50;
+  color: #ecf0f1;
+  border: 1px solid #444;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  letter-spacing: 0.5px;
+}
+
+.stealth-status {
+  font-size: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: #1e272e;
+  color: #00d2d3;
+  border: 1px solid #00d2d3;
+  letter-spacing: 0.5px;
+  transition: all 0.2s;
+}
+.stealth-status.spotted {
+  background: #b71540;
+  color: #fff;
+  border-color: #ff3838;
+  animation: pulse 1s infinite;
+}
+
+.toolbar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Header */
+header {
+  width: 100%;
+  max-width: var(--game-max-width, 640px);
+  text-align: center;
+  margin-bottom: 12px;
+  transition: max-width 0.25s ease;
+}
+
+.game-title {
+  font-size: 22px;
+  letter-spacing: 2px;
+  color: #f1c40f;
+  text-shadow: 3px 3px 0px #c0392b, 5px 5px 0px #000;
+  margin-bottom: 6px;
+}
+
+.game-subtitle {
+  font-size: 9px;
+  color: #95a5a6;
+  letter-spacing: 1px;
+}
+
+/* Card Panels */
+.card {
+  background: var(--panel-bg);
+  border: 4px solid #34495e;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+  width: 100%;
+  max-width: var(--game-max-width, 640px);
+  padding: 20px;
+  text-align: center;
+  margin-bottom: 12px;
+  transition: max-width 0.25s ease;
+}
+
+/* Buttons */
+.btn {
+  font-family: var(--font-arcade);
+  font-size: 11px;
+  padding: 13px 18px;
+  border: 3px solid #000;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: transform 0.08s, box-shadow 0.08s, background-color 0.2s;
+  outline: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+  color: #fff;
+}
+
+.btn:active {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 #000 !important;
+}
+
+.btn-create {
+  background: #e67e22;
+  box-shadow: 4px 4px 0 #000;
+  width: 100%;
+  font-size: 11px;
+  padding: 13px;
+}
+.btn-create:hover { background: #d35400; }
+
+.btn-editor-open {
+  background: #8e44ad;
+  box-shadow: 4px 4px 0 #000;
+  width: 100%;
+  font-size: 11px;
+  padding: 13px;
+  margin-top: 10px;
+}
+.btn-editor-open:hover { background: #7d3c98; }
+
+.btn-join {
+  background: #27ae60;
+  box-shadow: 3px 3px 0 #000;
+  font-size: 10px;
+  padding: 11px 16px;
+}
+.btn-join:hover { background: #219653; }
+
+.btn-copy {
+  background: #2980b9;
+  box-shadow: 2px 2px 0 #000;
+  font-size: 9px;
+  padding: 9px 12px;
+  white-space: nowrap;
+}
+.btn-copy:hover { background: #1f618d; }
+
+.btn-tool {
+  background: #2c3e50;
+  border: 2px solid #000;
+  padding: 7px 10px;
+  font-size: 8px;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 #000;
+  color: #fff;
+  font-family: var(--font-arcade);
+}
+.btn-tool:hover { background: #34495e; }
+
+.link-box {
+  background: #111;
+  border: 2px dashed #f39c12;
+  padding: 10px 12px;
+  margin: 12px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 4px;
+}
+
+.link-input {
+  font-family: monospace;
+  font-size: 11px;
+  background: transparent;
+  border: none;
+  color: #f1c40f;
+  width: 100%;
+  outline: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.room-badge {
+  display: inline-block;
+  background: #222;
+  border: 1px solid #f39c12;
+  color: #f39c12;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  margin-top: 6px;
+  font-family: monospace;
+  letter-spacing: 1px;
+}
+
+.status-text {
+  font-size: 10px;
+  color: #f39c12;
+  margin-top: 14px;
+  line-height: 1.6;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.divider {
+  position: relative;
+  margin: 18px 0 14px;
+  color: #7f8c8d;
+  font-size: 9px;
+}
+.divider::before, .divider::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 32%;
+  height: 2px;
+  background: #34495e;
+}
+.divider::before { left: 0; }
+.divider::after { right: 0; }
+
+.join-form {
+  display: flex;
+  gap: 8px;
+}
+
+.input-field {
+  flex: 1;
+  padding: 10px 12px;
+  font-family: var(--font-arcade);
+  font-size: 9px;
+  background: #111;
+  border: 2px solid #555;
+  color: #fff;
+  border-radius: 4px;
+  outline: none;
+}
+.input-field:focus {
+  border-color: #2ecc71;
+}
+
+.select-field {
+  width: 100%;
+  padding: 10px 12px;
+  font-family: var(--font-arcade);
+  font-size: 9px;
+  background: #111;
+  border: 2px solid #f39c12;
+  color: #f39c12;
+  border-radius: 4px;
+  outline: none;
+  margin-bottom: 12px;
+  cursor: pointer;
+}
+
+.form-label {
+  font-size: 8px;
+  color: #bdc3c7;
+  text-align: left;
+  margin-bottom: 6px;
+  display: block;
+  letter-spacing: 0.5px;
+}
+
+/* ==========================================
+   MAP EDITOR STYLES
+   ========================================== */
+#editorScreen {
+  width: 100%;
+  max-width: var(--editor-max-width, 760px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: max-width 0.25s ease;
+}
+
+.editor-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.editor-controls-row {
+  width: 100%;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.size-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 8px;
+  color: #bdc3c7;
+}
+
+.size-input {
+  width: 50px;
+  padding: 6px;
+  font-family: var(--font-arcade);
+  font-size: 9px;
+  background: #111;
+  border: 1px solid #555;
+  color: #fff;
+  border-radius: 3px;
+  text-align: center;
+}
+
+/* Dynamic Palette */
+.palette-container {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+  background: #111;
+  padding: 8px;
+  border: 2px solid #34495e;
+  border-radius: 6px;
+  justify-content: center;
+}
+
+.palette-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  font-size: 8px;
+  background: #222;
+  border: 2px solid #444;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.palette-btn:hover {
+  background: #333;
+}
+.palette-btn.active {
+  border-color: #f1c40f;
+  background: rgba(241, 196, 15, 0.15);
+  box-shadow: 0 0 6px rgba(241, 196, 15, 0.5);
+}
+
+.palette-btn.spawn-p1 {
+  border-color: #f39c12;
+}
+.palette-btn.spawn-p1.active {
+  background: rgba(243, 156, 18, 0.25);
+  box-shadow: 0 0 8px #f39c12;
+}
+
+.palette-btn.spawn-p2 {
+  border-color: #2ecc71;
+}
+.palette-btn.spawn-p2.active {
+  background: rgba(46, 204, 113, 0.25);
+  box-shadow: 0 0 8px #2ecc71;
+}
+
+.palette-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid #000;
+  display: inline-block;
+}
+
+/* Editor Canvas Container */
+.editor-canvas-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: var(--editor-max-width, 760px);
+  background: #000;
+  border: 4px solid #8e44ad;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.8);
+  margin-bottom: 12px;
+  cursor: crosshair;
+  transition: max-width 0.25s ease;
+}
+
+#editorCanvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  background: #000;
+  image-rendering: pixelated;
+}
+
+.editor-save-row {
+  width: 100%;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.editor-maps-list {
+  width: 100%;
+  margin-top: 14px;
+  text-align: left;
+}
+
+.editor-map-card {
+  background: #111;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.editor-map-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.editor-map-name {
+  font-size: 9px;
+  color: #fff;
+}
+.editor-map-meta {
+  font-size: 7px;
+  color: #888;
+}
+
+.editor-map-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Game Screen Frame */
+#gameScreen {
+  width: 100%;
+  max-width: var(--game-max-width, 640px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0 auto;
+  transition: max-width 0.25s ease;
+}
+
+/* HUD Bar */
+.hud {
+  width: 100%;
+  max-width: var(--game-max-width, 640px);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #111;
+  border: 3px solid #34495e;
+  border-bottom: none;
+  padding: 10px 14px;
+  border-radius: 6px 6px 0 0;
+  font-size: 10px;
+  transition: max-width 0.25s ease;
+}
+
+.player-tag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.player-tag.p1 { color: var(--accent-p1); }
+.player-tag.p2 { color: var(--accent-p2); }
+
+.tank-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.target-score {
+  font-size: 8px;
+  color: #e74c3c;
+  letter-spacing: 1px;
+  text-align: center;
+}
+
+.score-badge {
+  font-size: 13px;
+  padding: 2px 6px;
+  background: #222;
+  border: 1px solid #444;
+  border-radius: 3px;
+}
+
+.kills-pips {
+  display: flex;
+  gap: 3px;
+  margin-top: 3px;
+}
+
+.pip {
+  width: 6px;
+  height: 6px;
+  background: #333;
+  border-radius: 1px;
+}
+.pip.active-p1 { background: var(--accent-p1); box-shadow: 0 0 3px var(--accent-p1); }
+.pip.active-p2 { background: var(--accent-p2); box-shadow: 0 0 3px var(--accent-p2); }
+
+/* Canvas Wrapper */
+.canvas-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: var(--game-max-width, 640px);
+  background: #000;
+  border: 4px solid #34495e;
+  border-radius: 0 0 6px 6px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+  overflow: hidden;
+  transition: max-width 0.25s ease;
+}
+
+#gameCanvas {
+  display: block;
+  width: 100%;
+  max-width: var(--game-max-width, 640px);
+  height: auto;
+  aspect-ratio: 1 / 1;
+  background: #000;
+  image-rendering: pixelated;
+}
+
+/* Game Over Overlay */
+.overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0, 0, 0, 0.88);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  padding: 24px;
+  text-align: center;
+  backdrop-filter: blur(2px);
+}
+
+.overlay h2 {
+  font-size: 18px;
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+
+.overlay p {
+  font-size: 9px;
+  color: #bdc3c7;
+  margin-bottom: 18px;
+  line-height: 1.7;
+}
+
+.overlay-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 320px;
+}
+
+/* Controls hints */
+.controls-info {
+  width: 100%;
+  max-width: var(--game-max-width, 640px);
+  margin-top: 10px;
+  font-size: 8px;
+  color: #7f8c8d;
+  text-align: center;
+  line-height: 1.7;
+  background: rgba(18, 24, 32, 0.7);
+  padding: 8px 12px;
+  border-radius: 4px;
+  border: 1px solid #2c3e50;
+  transition: max-width 0.25s ease;
+}
+
+.key-badge {
+  background: #222;
+  border: 1px solid #555;
+  color: #fff;
+  padding: 2px 5px;
+  border-radius: 3px;
+  display: inline-block;
+  margin: 0 2px;
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 20px;
+  background: #27ae60;
+  color: #fff;
+  padding: 12px 20px;
+  border-radius: 6px;
+  border: 2px solid #000;
+  box-shadow: 3px 3px 0 #000;
+  font-size: 9px;
+  z-index: 200;
+  transform: translateY(100px);
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.toast.show {
+  transform: translateY(0);
+}
+
+/* Mobile Controls */
+.mobile-controls {
+  display: none;
+  width: 100%;
+  max-width: var(--game-max-width, 640px);
+  margin-top: 12px;
+  justify-content: space-between;
+  align-items: center;
+  touch-action: none;
+  transition: max-width 0.25s ease;
+}
+
+@media (max-width: 650px) {
+  .game-title { font-size: 16px; }
+  .mobile-controls { display: flex; }
+  .hud { font-size: 8px; padding: 8px 10px; }
+  .score-badge { font-size: 11px; }
+  .card { padding: 16px; }
+}
+
+.dpad {
+  display: grid;
+  grid-template-columns: repeat(3, 44px);
+  grid-template-rows: repeat(3, 44px);
+  gap: 4px;
+}
+
+.dpad-btn {
+  background: #2c3e50;
+  border: 2px solid #000;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.dpad-btn:active { background: #e67e22; }
+
+.fire-btn {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background: #e74c3c;
+  border: 4px solid #000;
+  color: #fff;
+  font-family: var(--font-arcade);
+  font-size: 10px;
+  box-shadow: 3px 3px 0 #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.fire-btn:active {
+  transform: scale(0.93);
+  background: #c0392b;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* ==========================================
+   LOADOUT SELECTION (HULL & TURRET)
+   ========================================== */
+.loadout-selection-box {
+  background: #11141a;
+  border: 2px dashed #f39c12;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 14px;
+  text-align: left;
+}
+
+.loadout-header {
+  font-size: 9px;
+  color: #f1c40f;
+  margin-bottom: 8px;
+  letter-spacing: 0.5px;
+}
+
+.loadout-row {
+  display: flex;
+  gap: 10px;
+}
+
+.loadout-col {
+  flex: 1;
+}
+
+.loadout-select {
+  margin-bottom: 0;
+  padding: 8px 10px;
+  font-size: 8px;
+  background: #1a1e24;
+  border: 1px solid #7f8c8d;
+  color: #ecf0f1;
+}
+.loadout-select:focus {
+  border-color: #f1c40f;
+}
+
+.loadout-stats-desc {
+  font-size: 7.5px;
+  color: #bdc3c7;
+  line-height: 1.45;
+  margin-top: 6px;
+  text-align: left;
+  min-height: 28px;
+  padding: 4px 6px;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 3px;
+  border-left: 2px solid #f39c12;
+}
+
+/* ==========================================
+   LOCAL PLAYER HUD HEALTH BAR
+   ========================================== */
+.player-hp-bar-container {
+  width: 100%;
+  background: #14181f;
+  border-top: 2px solid #2c3e50;
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.hp-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.hp-badge {
+  font-size: 8px;
+  color: #f1c40f;
+  letter-spacing: 0.5px;
+  font-weight: bold;
+}
+
+.hp-stats-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hp-text-label {
+  font-size: 9px;
+  color: #2ecc71;
+  font-family: monospace;
+  font-weight: bold;
+  letter-spacing: 1px;
+  transition: color 0.2s ease;
+}
+
+.hp-armor-badge {
+  font-size: 8px;
+  color: #55efc4;
+  background: rgba(16, 172, 132, 0.16);
+  border: 1px solid #10ac84;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+}
+
+.hp-ammo-badge {
+  font-size: 8px;
+  color: #ffeaa7;
+  background: rgba(243, 156, 18, 0.18);
+  border: 1px solid #f39c12;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-family: monospace;
+  font-weight: bold;
+  letter-spacing: 0.5px;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.hp-ammo-badge.reloading {
+  color: #ff7675;
+  background: rgba(231, 76, 60, 0.22);
+  border-color: #e74c3c;
+}
+
+.hp-bar-track {
+  width: 100%;
+  height: 12px;
+  background: #090b0e;
+  border: 1px solid #34495e;
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.7);
+}
+
+.hp-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #27ae60, #2ecc71);
+  box-shadow: 0 0 8px rgba(46, 204, 113, 0.6);
+  transition: width 0.18s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.2s ease;
+}
+
+.hp-bar-fill.medium {
+  background: linear-gradient(90deg, #d35400, #f39c12);
+  box-shadow: 0 0 8px rgba(243, 156, 18, 0.6);
+}
+
+.hp-bar-fill.critical {
+  background: linear-gradient(90deg, #c0392b, #e74c3c);
+  box-shadow: 0 0 8px rgba(231, 76, 60, 0.8);
+  animation: hpPulse 0.8s infinite;
+}
+
+.hp-bottom-stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(52, 73, 94, 0.7);
+}
+
+.hp-stat-item {
+  font-size: 7.5px;
+  color: #dfe6e9;
+  background: rgba(15, 22, 32, 0.85);
+  border: 1px solid #2c3e50;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-family: monospace;
+  font-weight: bold;
+  letter-spacing: 0.3px;
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+}
+
+@keyframes hpPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* ==========================================
+   EXPANDABLE INFO ACCORDIONS (2 WINDOWS)
+   ========================================== */
+.info-accordions-wrapper {
+  width: 100%;
+  max-width: var(--game-max-width, 640px);
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: max-width 0.25s ease;
+}
+
+.info-accordion {
+  width: 100%;
+  background: rgba(18, 24, 32, 0.88);
+  border: 2px solid #2c3e50;
+  border-radius: 5px;
+  overflow: visible;
+  transition: border-color 0.2s ease;
+}
+
+.info-accordion[open] {
+  border-color: #f39c12;
+}
+
+.info-accordion-header {
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 14px;
+  font-size: 8.5px;
+  color: #ecf0f1;
+  background: #141a22;
+  border-radius: 3px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.info-accordion-header::-webkit-details-marker {
+  display: none;
+}
+
+.info-accordion-header:hover {
+  background: #1b2430;
+  color: #f1c40f;
+}
+
+.accordion-arrow {
+  font-size: 9px;
+  color: #f39c12;
+  transition: transform 0.2s ease;
+}
+
+.info-accordion[open] .accordion-arrow {
+  transform: rotate(180deg);
+}
+
+.info-accordion-body {
+  padding: 10px 14px;
+  border-top: 1px solid #2c3e50;
+  font-size: 8px;
+  color: #bdc3c7;
+  line-height: 1.75;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.info-line {
+  padding: 2px 0;
+}
+
+/* ==========================================
+   HUD MINES, REPAIR & REBIRTH BADGES & POST-ROUND PERK SELECTION
+   ========================================== */
+.hp-mines-badge {
+  font-size: 8.5px;
+  color: #f1c40f;
+  background: rgba(241, 196, 15, 0.14);
+  border: 1px solid rgba(241, 196, 15, 0.45);
+  border-radius: 3px;
+  padding: 2px 6px;
+  letter-spacing: 0.4px;
+}
+
+.hp-repair-badge {
+  font-size: 8.5px;
+  color: #55efc4;
+  background: rgba(85, 239, 196, 0.14);
+  border: 1px solid rgba(85, 239, 196, 0.45);
+  border-radius: 3px;
+  padding: 2px 6px;
+  letter-spacing: 0.4px;
+}
+
+.hp-rebirth-badge {
+  font-size: 8.5px;
+  color: #ff6b81;
+  background: rgba(255, 0, 127, 0.16);
+  border: 1px solid rgba(255, 0, 127, 0.55);
+  border-radius: 3px;
+  padding: 2px 6px;
+  letter-spacing: 0.4px;
+}
+
+.perk-overlay {
+  background: rgba(8, 11, 16, 0.92);
+  backdrop-filter: blur(4px);
+  padding: 18px 14px;
+  z-index: 35;
+}
+
+.perk-view {
+  width: 100%;
+  max-width: 600px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.perk-modal-title {
+  color: #f1c40f;
+  font-size: 13px;
+  text-shadow: 0 2px 8px rgba(241, 196, 15, 0.45);
+  margin: 0;
+}
+
+.perk-modal-subtitle {
+  color: #bdc3c7;
+  font-size: 8.5px;
+  line-height: 1.5;
+  margin: 0 0 6px 0;
+  max-width: 500px;
+}
+
+.perk-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  width: 100%;
+}
+
+@media (max-width: 560px) {
+  .perk-cards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.perk-card {
+  font-family: inherit;
+  background: linear-gradient(180deg, #161d26 0%, #0e1319 100%);
+  border: 3px solid #95a5a6;
+  border-radius: 7px;
+  padding: 12px 10px;
+  color: #ecf0f1;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  text-align: center;
+  gap: 7px;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+  position: relative;
+  min-height: 170px;
+}
+
+.perk-card:hover {
+  transform: translateY(-4px) scale(1.02);
+}
+
+/* ЗВИЧАЙНА — СІРА ОБВОДКА */
+.perk-card.perk-rarity-common {
+  border-color: #95a5a6;
+  box-shadow: 0 0 12px rgba(149, 165, 166, 0.3), inset 0 0 10px rgba(149, 165, 166, 0.08);
+}
+.perk-card.perk-rarity-common:hover {
+  border-color: #bdc3c7;
+  box-shadow: 0 0 18px rgba(189, 195, 199, 0.55), inset 0 0 14px rgba(189, 195, 199, 0.15);
+}
+.perk-card.perk-rarity-common .perk-rarity-badge {
+  background: rgba(149, 165, 166, 0.22);
+  color: #dfe6e9;
+  border: 1px solid #95a5a6;
+}
+
+/* РІДКІСНА — СИНЯ ОБВОДКА */
+.perk-card.perk-rarity-rare {
+  border-color: #3498db;
+  box-shadow: 0 0 15px rgba(52, 152, 219, 0.45), inset 0 0 12px rgba(52, 152, 219, 0.12);
+}
+.perk-card.perk-rarity-rare:hover {
+  border-color: #54a0ff;
+  box-shadow: 0 0 22px rgba(84, 160, 255, 0.75), inset 0 0 16px rgba(84, 160, 255, 0.2);
+}
+.perk-card.perk-rarity-rare .perk-rarity-badge {
+  background: rgba(52, 152, 219, 0.25);
+  color: #74b9ff;
+  border: 1px solid #3498db;
+}
+
+/* ЛЕГЕНДАРНА — ЗОЛОТА ОБВОДКА */
+.perk-card.perk-rarity-legendary {
+  border-color: #f1c40f;
+  box-shadow: 0 0 18px rgba(241, 196, 15, 0.6), inset 0 0 14px rgba(241, 196, 15, 0.16);
+  animation: legendaryCardGlow 1.8s infinite alternate;
+}
+.perk-card.perk-rarity-legendary:hover {
+  border-color: #ffeaa7;
+  box-shadow: 0 0 26px rgba(241, 196, 15, 0.9), inset 0 0 18px rgba(241, 196, 15, 0.25);
+}
+.perk-card.perk-rarity-legendary .perk-rarity-badge {
+  background: rgba(241, 196, 15, 0.25);
+  color: #ffeaa7;
+  border: 1px solid #f1c40f;
+}
+
+/* БОЖЕСТВЕННА — МАЛИНОВО-ПУРПУРОВА ОБВОДКА */
+.perk-card.perk-rarity-divine {
+  border-color: #ff007f;
+  box-shadow: 0 0 22px rgba(255, 0, 127, 0.75), inset 0 0 16px rgba(255, 0, 127, 0.22);
+  animation: divineCardGlow 1.5s infinite alternate;
+}
+.perk-card.perk-rarity-divine:hover {
+  border-color: #ff79c6;
+  box-shadow: 0 0 30px rgba(255, 0, 127, 0.95), inset 0 0 20px rgba(255, 121, 198, 0.32);
+}
+.perk-card.perk-rarity-divine .perk-rarity-badge {
+  background: rgba(255, 0, 127, 0.28);
+  color: #ff9ff3;
+  border: 1px solid #ff007f;
+}
+
+@keyframes legendaryCardGlow {
+  0% { box-shadow: 0 0 14px rgba(241, 196, 15, 0.45), inset 0 0 10px rgba(241, 196, 15, 0.12); }
+  100% { box-shadow: 0 0 24px rgba(243, 156, 18, 0.8), inset 0 0 16px rgba(241, 196, 15, 0.24); }
+}
+
+@keyframes divineCardGlow {
+  0% { box-shadow: 0 0 16px rgba(255, 0, 127, 0.55), inset 0 0 12px rgba(255, 0, 127, 0.16); }
+  100% { box-shadow: 0 0 28px rgba(255, 0, 127, 0.9), inset 0 0 18px rgba(255, 121, 198, 0.3); }
+}
+
+.perk-rarity-badge {
+  font-size: 7px;
+  padding: 3px 7px;
+  border-radius: 3px;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+}
+
+.perk-card-icon {
+  font-size: 24px;
+  line-height: 1.1;
+  margin: 2px 0;
+}
+
+.perk-card-title {
+  font-size: 9px;
+  color: #ffffff;
+  line-height: 1.4;
+}
+
+.perk-card-desc {
+  font-size: 7.5px;
+  color: #bdc3c7;
+  line-height: 1.55;
+}
+
+.perk-card-stack {
+  font-size: 6.8px;
+  color: #7f8c8d;
+  border-top: 1px dashed rgba(255, 255, 255, 0.12);
+  padding-top: 5px;
+  width: 100%;
+}
+
+.perk-wait-view {
+  padding: 26px 18px;
+  background: rgba(16, 22, 30, 0.9);
+  border: 2px solid #2ecc71;
+  border-radius: 8px;
+  box-shadow: 0 0 20px rgba(46, 204, 113, 0.25);
+}
+
+.perk-wait-spinner {
+  font-size: 28px;
+  animation: waitPulse 1.2s infinite ease-in-out;
+}
+
+.perk-wait-title {
+  color: #2ecc71;
+  font-size: 13px;
+  margin: 4px 0;
+}
+
+.perk-wait-desc {
+  color: #ecf0f1;
+  font-size: 9.5px;
+  line-height: 1.6;
+}
+
+@keyframes waitPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.14); opacity: 0.7; }
+}
+
+/* ==========================================
+   GAME MECHANICS BUTTON & AUTOMATIC CATALOG
+   ========================================== */
+#mechanicsScreen {
+  max-width: min(860px, 96vw);
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+#mechanicsScreen .editor-header {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: var(--panel-bg);
+  padding: 6px 0 10px 0;
+  border-bottom: 1px solid #2c3e50;
+}
+
+.btn-mechanics-open {
+  background: #0984e3;
+  color: #fff;
+  width: 100%;
+  padding: 13px;
+  font-size: 11px;
+  margin-bottom: 10px;
+}
+.btn-mechanics-open:hover {
+  background: #00a8ff;
+}
+
+.mechanics-catalog,
+.mechanics-catalog.compact {
+  display: block !important;
+  text-align: left;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  padding-right: 0;
+}
+
+.mechanics-section {
+  display: block !important;
+  background: rgba(14, 18, 25, 0.85);
+  border: 1px solid #2c3e50;
+  border-radius: 6px;
+  padding: 0 !important;
+  margin-bottom: 14px;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+  flex-shrink: 0 !important;
+}
+
+.mechanics-section:last-child {
+  margin-bottom: 0;
+}
+
+.mechanics-section-title {
+  font-size: 9.5px;
+  color: #f1c40f;
+  margin-bottom: 0 !important;
+  padding-bottom: 0;
+  border-bottom: none !important;
+  letter-spacing: 0.4px;
+}
+
+.mechanics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 8px;
+}
+
+.mechanics-item-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #141922;
+  border: 2px solid #2c3e50;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.mechanics-item-card.perk-rarity-common {
+  border-color: #95a5a6;
+}
+.mechanics-item-card.perk-rarity-rare {
+  border-color: #3498db;
+}
+.mechanics-item-card.perk-rarity-legendary {
+  border-color: #f1c40f;
+  box-shadow: 0 0 10px rgba(241, 196, 15, 0.25);
+}
+.mechanics-item-card.perk-rarity-divine {
+  border-color: #ff007f;
+  box-shadow: 0 0 14px rgba(255, 0, 127, 0.45);
+}
+
+.mechanics-tile-preview {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  border: 1px solid #34495e;
+  border-radius: 4px;
+  background: #0e1117;
+  image-rendering: pixelated;
+}
+
+.mechanics-perk-icon {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  background: #0e1218;
+  border: 1px solid #2c3e50;
+  border-radius: 5px;
+}
+
+.mechanics-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.mechanics-item-title {
+  font-size: 8.5px;
+  color: #ffffff;
+  line-height: 1.35;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.mechanics-item-desc {
+  font-size: 7.5px;
+  color: #bdc3c7;
+  line-height: 1.5;
+}
+
+.mechanics-item-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.mechanics-tag {
+  font-size: 6.5px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: #1e272e;
+  color: #dfe6e9;
+  border: 1px solid #34495e;
+}
+
+/* ==========================================
+   MUTUAL REMATCH OVERLAY & SETUP
+   ========================================== */
+.rematch-overlay {
+  padding: 16px 18px;
+  overflow-y: auto;
+}
+
+.rematch-overlay h2 {
+  font-size: 16px;
+  margin-bottom: 6px;
+}
+
+.rematch-overlay p {
+  margin-bottom: 10px;
+}
+
+.rematch-status-panel {
+  width: 100%;
+  max-width: 480px;
+  background: rgba(16, 22, 30, 0.92);
+  border: 1px solid #34495e;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+
+.rematch-players-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.rematch-player-pill {
+  flex: 1;
+  font-size: 7.5px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #1a212b;
+  border: 1px solid #485460;
+  color: #bdc3c7;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.rematch-player-pill.ready {
+  background: rgba(39, 174, 96, 0.22);
+  border-color: #2ecc71;
+  color: #55efc4;
+  box-shadow: 0 0 10px rgba(46, 204, 113, 0.3);
+}
+
+.rematch-prompt-banner {
+  font-size: 8px;
+  color: #f1c40f;
+  line-height: 1.45;
+  padding-top: 4px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.12);
+}
+
+.rematch-setup-box {
+  width: 100%;
+  max-width: 480px;
+  background: rgba(15, 19, 26, 0.94);
+  border: 2px dashed #f39c12;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  text-align: left;
+}
+
+.rematch-map-row {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+}
+
+#btnRematch.ready-waiting {
+  background: #27ae60;
+  border-color: #2ecc71;
+  box-shadow: 0 0 14px rgba(46, 204, 113, 0.45);
+}
+
+/* ==========================================
+   V11: SMOKE / ACTIVE SWITCH HUD BADGES, REROLL, 4-CARD GRID & COLLAPSIBLE MECHANICS
+   ========================================== */
+.hp-smoke-badge {
+  font-size: 8.5px;
+  color: #dfe6e9;
+  background: rgba(178, 190, 195, 0.16);
+  border: 1px solid rgba(178, 190, 195, 0.5);
+  border-radius: 3px;
+  padding: 2px 6px;
+  letter-spacing: 0.4px;
+}
+
+.hp-active-switch-badge {
+  font-size: 8px;
+  color: #74b9ff;
+  background: rgba(9, 132, 227, 0.18);
+  border: 1px solid rgba(116, 185, 255, 0.55);
+  border-radius: 3px;
+  padding: 2px 5px;
+  letter-spacing: 0.3px;
+}
+
+.active-ability-selected {
+  box-shadow: 0 0 8px rgba(241, 196, 15, 0.75);
+  border-width: 1.5px !important;
+  border-color: #ffeaa7 !important;
+}
+
+.perk-cards-grid.four-cards {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+@media (max-width: 620px) {
+  .perk-cards-grid.four-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.perk-reroll-row {
+  margin-top: 8px;
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.btn-reroll {
+  background: linear-gradient(180deg, #0984e3 0%, #0652DD 100%);
+  color: #ffffff;
+  border: 2px solid #74b9ff;
+  border-radius: 5px;
+  padding: 9px 16px;
+  font-size: 9px;
+  cursor: pointer;
+  box-shadow: 0 0 12px rgba(9, 132, 227, 0.5);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.btn-reroll:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 18px rgba(116, 185, 255, 0.85);
+}
+
+/* Згортання / розгортання списків та підсписків у Механіках гри */
+.mechanics-details {
+  display: block;
+  background: rgba(14, 18, 25, 0.88);
+  border: 1px solid #2c3e50;
+  border-radius: 6px;
+  overflow: visible;
+  flex-shrink: 0;
+  margin-bottom: 14px;
+}
+
+.mechanics-details-summary {
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 11px 14px;
+  font-size: 9.5px;
+  color: #f1c40f;
+  background: #141a24;
+  border-radius: 5px;
+  cursor: pointer;
+  user-select: none;
+  letter-spacing: 0.4px;
+  transition: background 0.15s ease;
+}
+
+.mechanics-details-summary::-webkit-details-marker {
+  display: none;
+}
+
+.mechanics-details-summary:hover {
+  background: #1b2432;
+}
+
+.mechanics-details-arrow {
+  font-size: 9px;
+  color: #f39c12;
+  transition: transform 0.2s ease;
+}
+
+.mechanics-details[open] > .mechanics-details-summary .mechanics-details-arrow {
+  transform: rotate(180deg);
+}
+
+.mechanics-details-body {
+  display: block;
+  padding: 12px;
+  border-top: 1px dashed rgba(241, 196, 15, 0.28);
+}
+
+/* Підсписки для кожної рідкості здібностей */
+.mechanics-rarity-details {
+  display: block;
+  background: rgba(18, 24, 34, 0.85);
+  border: 1px solid #34495e;
+  border-radius: 5px;
+  overflow: visible;
+  flex-shrink: 0;
+  margin-bottom: 10px;
+}
+
+.mechanics-rarity-details:last-child {
+  margin-bottom: 0;
+}
+
+.mechanics-rarity-details.rarity-group-common {
+  border-color: rgba(149, 165, 166, 0.65);
+}
+.mechanics-rarity-details.rarity-group-rare {
+  border-color: rgba(52, 152, 219, 0.75);
+}
+.mechanics-rarity-details.rarity-group-legendary {
+  border-color: rgba(241, 196, 15, 0.8);
+}
+.mechanics-rarity-details.rarity-group-divine {
+  border-color: rgba(255, 0, 127, 0.85);
+}
+
+.mechanics-rarity-summary {
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 12px;
+  font-size: 8.5px;
+  cursor: pointer;
+  user-select: none;
+  background: rgba(10, 14, 20, 0.75);
+  border-radius: 4px;
+  transition: background 0.15s ease;
+}
+
+.mechanics-rarity-summary::-webkit-details-marker {
+  display: none;
+}
+
+.mechanics-rarity-summary:hover {
+  background: rgba(28, 38, 52, 0.85);
+}
+
+.mechanics-rarity-details[open] > .mechanics-rarity-summary .mechanics-details-arrow {
+  transform: rotate(180deg);
+}
+
+.mechanics-rarity-body {
+  display: block;
+  padding: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* ==========================================
+   V15: TEST MODE (SANDBOX), LEFT/RIGHT PERKS SIDEBARS & TELEMETRY (FPS + PING)
+   ========================================== */
+.btn-test-mode {
+  background: linear-gradient(180deg, #00b894 0%, #00896f 100%);
+  color: #ffffff;
+  width: 100%;
+  padding: 13px;
+  font-size: 11px;
+  margin-bottom: 10px;
+  box-shadow: 4px 4px 0 #000;
+}
+.btn-test-mode:hover {
+  background: linear-gradient(180deg, #00d2a8 0%, #00a383 100%);
+}
+
+/* Сцена поля бою з бічними панелями у вільній зоні браузера */
+.battlefield-stage {
+  position: relative;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.perks-sidebar {
+  position: absolute;
+  top: 0;
+  width: 225px;
+  max-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 25;
+  pointer-events: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #34495e transparent;
+}
+
+/* Зліва від ігрового поля (Червоні лінії): Пасивні здібності */
+.passive-sidebar {
+  right: calc(100% + 16px);
+  text-align: left;
+}
+
+/* Справа від ігрового поля (Зелені лінії): Активні здібності */
+.active-sidebar {
+  left: calc(100% + 16px);
+  text-align: left;
+}
+
+.sidebar-header {
+  font-size: 7.5px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  background: rgba(15, 20, 28, 0.92);
+  border: 1px solid #34495e;
+  letter-spacing: 0.5px;
+  text-align: center;
+}
+
+.passive-header {
+  color: #ff7675;
+  border-color: rgba(231, 76, 60, 0.65);
+  box-shadow: 0 0 8px rgba(231, 76, 60, 0.2);
+}
+
+.active-header {
+  color: #55efc4;
+  border-color: rgba(46, 204, 113, 0.65);
+  box-shadow: 0 0 8px rgba(46, 204, 113, 0.2);
+}
+
+.sidebar-switch-banner {
+  font-size: 7px;
+  color: #ffeaa7;
+  background: rgba(243, 156, 18, 0.16);
+  border: 1px dashed #f39c12;
+  border-radius: 4px;
+  padding: 4px 6px;
+  text-align: center;
+  line-height: 1.35;
+}
+
+.sidebar-perks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.passive-sidebar .sidebar-perks-list {
+  gap: 3px;
+}
+
+.active-sidebar .sidebar-perks-list {
+  gap: 8px;
+  padding: 2px 3px;
+}
+
+.sidebar-empty-hint {
+  font-size: 7px;
+  color: #636e72;
+  background: rgba(14, 18, 25, 0.65);
+  border: 1px dashed #2c3e50;
+  border-radius: 5px;
+  padding: 6px 8px;
+  text-align: center;
+  line-height: 1.4;
+}
+
+.sidebar-perk-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: rgba(18, 24, 34, 0.94);
+  border: 1.5px solid #34495e;
+  border-radius: 5px;
+  padding: 6px 8px;
+  transition: transform 0.14s ease, box-shadow 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+/* Підсвічування рідкості у бічних панелях (підтримка обох класів) */
+.sidebar-perk-pill.rarity-common,
+.sidebar-perk-pill.perk-rarity-common {
+  border-color: #95a5a6;
+}
+.sidebar-perk-pill.rarity-rare,
+.sidebar-perk-pill.perk-rarity-rare {
+  border-color: #3498db;
+  box-shadow: 0 0 6px rgba(52, 152, 219, 0.25);
+}
+.sidebar-perk-pill.rarity-legendary,
+.sidebar-perk-pill.perk-rarity-legendary {
+  border-color: #f1c40f;
+  box-shadow: 0 0 8px rgba(241, 196, 15, 0.3);
+}
+.sidebar-perk-pill.rarity-divine,
+.sidebar-perk-pill.perk-rarity-divine {
+  border-color: #ff007f;
+  box-shadow: 0 0 10px rgba(255, 0, 127, 0.45);
+}
+
+/* Унікальна вбудована пасивка корпусу (напр. Фантомний корпус) */
+.sidebar-perk-pill.hull-passive-pill {
+  border-color: #00d2d3 !important;
+  background: linear-gradient(135deg, rgba(10, 38, 46, 0.96), rgba(16, 24, 34, 0.96));
+  box-shadow: 0 0 9px rgba(0, 210, 211, 0.35);
+}
+
+/* КОМПАКТНИЙ ВИГЛЯД ЗЛІВА (ПАСИВНІ ЗДІБНОСТІ — ЛИШЕ ЗНАЧОК, НАЗВА ТА КІЛЬКІСТЬ, БІЛЬШИЙ ШРИФТ) */
+.passive-sidebar .sidebar-perk-pill.passive-pill {
+  padding: 5px 8px;
+  gap: 7px;
+  border-radius: 5px;
+}
+
+.passive-sidebar .sidebar-perk-icon {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  font-size: 13px;
+  border-radius: 4px;
+}
+
+.passive-sidebar .sidebar-perk-body,
+.passive-sidebar .sidebar-perk-info {
+  gap: 2px;
+}
+
+.passive-sidebar .sidebar-perk-title {
+  font-size: 8px;
+  line-height: 1.3;
+  font-weight: bold;
+}
+
+.passive-sidebar .sidebar-perk-count,
+.passive-sidebar .sidebar-perk-stack {
+  font-size: 7.5px;
+  padding: 2px 5px;
+  font-weight: bold;
+}
+
+.passive-sidebar .sidebar-perk-desc {
+  display: none !important;
+}
+
+/* БІЛЬШИЙ ТА ЯСКРАВІШИЙ ВИГЛЯД СПРАВА (АКТИВНІ ЗДІБНОСТІ) */
+.active-sidebar .sidebar-perk-pill.active-pill {
+  padding: 8px 10px;
+  gap: 8px;
+  border-width: 2px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.active-sidebar .sidebar-perk-pill.active-pill:not(.selected-active) {
+  opacity: 0.72;
+  filter: saturate(0.75);
+  transform: scale(0.96);
+}
+
+.active-sidebar .sidebar-perk-pill.active-pill:hover {
+  opacity: 0.95;
+}
+
+/* ВИБРАНА АКТИВНА ЗДІБНІСТЬ НА ПРОБІЛ — ПОМІТНО БІЛЬША ТА ЯСКРАВІША */
+.sidebar-perk-pill.active-selected,
+.active-sidebar .sidebar-perk-pill.active-pill.selected-active {
+  opacity: 1 !important;
+  filter: none !important;
+  transform: scale(1.04);
+  padding: 10px 11px;
+  border: 2.5px solid #00ff88 !important;
+  background: linear-gradient(135deg, rgba(16, 66, 44, 0.98), rgba(10, 34, 24, 0.98)) !important;
+  box-shadow: 0 0 18px rgba(0, 255, 136, 0.75), inset 0 0 12px rgba(0, 255, 136, 0.22) !important;
+}
+
+.active-sidebar .sidebar-perk-pill.active-pill .sidebar-perk-icon {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  font-size: 16px;
+}
+
+.active-sidebar .sidebar-perk-pill.active-pill.selected-active .sidebar-perk-icon {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  font-size: 20px;
+  border-color: #00ff88;
+  background: rgba(0, 255, 136, 0.15);
+  box-shadow: 0 0 10px rgba(0, 255, 136, 0.45);
+}
+
+.active-sidebar .sidebar-perk-pill.active-pill .sidebar-perk-title {
+  font-size: 7.8px;
+}
+
+.active-sidebar .sidebar-perk-pill.active-pill.selected-active .sidebar-perk-title {
+  font-size: 8.8px;
+  color: #55efc4;
+  text-shadow: 0 0 6px rgba(85, 239, 196, 0.55);
+}
+
+.active-selected-badge {
+  display: inline-block;
+  font-size: 6.2px;
+  color: #09130e;
+  background: #00ff88;
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-weight: bold;
+  letter-spacing: 0.4px;
+  margin-bottom: 2px;
+  box-shadow: 0 0 8px rgba(0, 255, 136, 0.6);
+}
+
+.sidebar-perk-icon {
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  border-radius: 5px;
+  background: #0e1218;
+  border: 1px solid #2c3e50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+}
+
+.sidebar-perk-body,
+.sidebar-perk-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-perk-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+}
+
+.sidebar-perk-title {
+  font-size: 7.5px;
+  color: #ffffff;
+  line-height: 1.25;
+  word-break: break-word;
+}
+
+.sidebar-perk-count,
+.sidebar-perk-stack {
+  font-size: 7px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #2c3e50;
+  color: #ffeaa7;
+  border: 1px solid #f39c12;
+  white-space: nowrap;
+}
+
+.sidebar-perk-desc,
+.sidebar-perk-status {
+  font-size: 6.3px;
+  color: #bdc3c7;
+  line-height: 1.3;
+}
+
+.sidebar-active-meta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.sidebar-active-key {
+  font-size: 6px;
+  color: #dfe6e9;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid #485460;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.sidebar-active-cooldown {
+  font-size: 6.5px;
+  font-weight: bold;
+}
+
+.sidebar-active-cooldown.ready,
+.sidebar-perk-status.status-ready {
+  color: #00ff88;
+}
+
+.sidebar-active-cooldown.cooldown,
+.sidebar-perk-status.status-cooldown {
+  color: #ff7675;
+}
+
+/* Приховуємо старі дублюючі бейджі зі смужки HP, бо тепер вони винесені у бічні панелі */
+.player-hp-bar-container .hp-mines-badge,
+.player-hp-bar-container .hp-smoke-badge,
+.player-hp-bar-container .hp-artillery-badge,
+.player-hp-bar-container .hp-active-switch-badge,
+.player-hp-bar-container .hp-repair-badge,
+.player-hp-bar-container .hp-rebirth-badge {
+  display: none !important;
+}
+
+@media (max-width: 1120px) {
+  .battlefield-stage {
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .perks-sidebar {
+    position: static;
+    width: 100%;
+    max-width: var(--game-max-width, 640px);
+    max-height: none;
+  }
+}
+
+/* Панель Зони Тестування (Полігону) — ЗБІЛЬШЕНИЙ ШРИФТ ВИБОРУ ЗДІБНОСТЕЙ */
+.test-mode-panel {
+  width: 100%;
+  max-width: var(--game-max-width, 640px);
+  background: rgba(14, 20, 28, 0.96);
+  border: 2px solid #00b894;
+  border-radius: 7px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  box-shadow: 0 4px 16px rgba(0, 184, 148, 0.25);
+  text-align: left;
+  box-sizing: border-box;
+  overflow-x: hidden;
+}
+
+.test-mode-quickbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.test-player-badge {
+  font-size: 8.5px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-weight: bold;
+  letter-spacing: 0.4px;
+}
+
+.test-player-badge.p1-active {
+  background: rgba(243, 156, 18, 0.2);
+  border: 1px solid #f39c12;
+  color: #f1c40f;
+}
+
+.test-player-badge.p2-active {
+  background: rgba(46, 204, 113, 0.2);
+  border: 1px solid #2ecc71;
+  color: #55efc4;
+}
+
+.test-quickbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.test-btn-switch {
+  background: #0984e3 !important;
+  border-color: #74b9ff !important;
+}
+
+.test-btn-heal {
+  background: #27ae60 !important;
+  border-color: #55efc4 !important;
+}
+
+.test-btn-perks {
+  background: #6c5ce7 !important;
+  border-color: #a29bfe !important;
+}
+
+.test-perk-manager {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(0, 184, 148, 0.45);
+  overflow-x: hidden;
+}
+
+.test-target-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.test-target-tabs {
+  display: flex;
+  gap: 6px;
+}
+
+.test-target-btn.active-p1 {
+  background: #d35400 !important;
+  border-color: #f1c40f !important;
+  box-shadow: 0 0 8px rgba(241, 196, 15, 0.45);
+}
+
+.test-target-btn.active-p2 {
+  background: #1e824c !important;
+  border-color: #2ecc71 !important;
+  box-shadow: 0 0 8px rgba(46, 204, 113, 0.45);
+}
+
+.test-btn-clear {
+  background: #c0392b !important;
+  border-color: #ff7675 !important;
+}
+
+.test-loadout-row {
+  margin-bottom: 8px;
+}
+
+.test-perk-search-row {
+  margin-bottom: 8px;
+}
+
+.test-perk-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 0 !important;
+  padding: 8px 12px !important;
+  font-size: 9px !important;
+  background: #101620 !important;
+  border: 1.5px solid #00b894 !important;
+  color: #ecf0f1 !important;
+  border-radius: 5px !important;
+}
+
+.test-perk-search-input:focus {
+  border-color: #55efc4 !important;
+  box-shadow: 0 0 8px rgba(85, 239, 196, 0.35);
+}
+
+.test-perks-catalog {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 7px;
+  max-height: 310px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  box-sizing: border-box;
+}
+
+.test-perk-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  background: #131922;
+  border: 1.5px solid #2c3e50;
+  border-radius: 6px;
+  padding: 6px 8px;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* Підсвічування рідкості у каталозі Полігону */
+.test-perk-chip.perk-rarity-common {
+  border-color: rgba(149, 165, 166, 0.85);
+  background: linear-gradient(135deg, rgba(149, 165, 166, 0.10), rgba(19, 25, 34, 0.96));
+}
+.test-perk-chip.perk-rarity-common .test-perk-chip-title {
+  color: #dfe6e9;
+}
+
+.test-perk-chip.perk-rarity-rare {
+  border-color: rgba(52, 152, 219, 0.95);
+  background: linear-gradient(135deg, rgba(52, 152, 219, 0.16), rgba(19, 25, 34, 0.96));
+  box-shadow: inset 0 0 6px rgba(52, 152, 219, 0.15);
+}
+.test-perk-chip.perk-rarity-rare .test-perk-chip-title {
+  color: #74b9ff;
+}
+
+.test-perk-chip.perk-rarity-legendary {
+  border-color: rgba(241, 196, 15, 0.95);
+  background: linear-gradient(135deg, rgba(241, 196, 15, 0.18), rgba(19, 25, 34, 0.96));
+  box-shadow: inset 0 0 8px rgba(241, 196, 15, 0.18);
+}
+.test-perk-chip.perk-rarity-legendary .test-perk-chip-title {
+  color: #ffeaa7;
+}
+
+.test-perk-chip.perk-rarity-divine {
+  border-color: rgba(255, 0, 127, 0.95);
+  background: linear-gradient(135deg, rgba(255, 0, 127, 0.22), rgba(19, 25, 34, 0.96));
+  box-shadow: 0 0 8px rgba(255, 0, 127, 0.25), inset 0 0 8px rgba(255, 0, 127, 0.2);
+}
+.test-perk-chip.perk-rarity-divine .test-perk-chip-title {
+  color: #ff79c6;
+}
+
+.test-perk-chip.has-perk {
+  box-shadow: 0 0 8px rgba(46, 204, 113, 0.35);
+}
+
+.test-perk-chip.forbidden-perk {
+  opacity: 0.45;
+  filter: grayscale(0.6);
+}
+
+.test-perk-chip-icon {
+  font-size: 16px;
+  min-width: 22px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.test-perk-chip-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.test-perk-chip-title {
+  font-size: 8.2px;
+  color: #ecf0f1;
+  line-height: 1.3;
+  font-weight: bold;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.test-perk-chip-sub {
+  font-size: 7px;
+  color: #b2bec3;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.test-perk-chip-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.test-perk-chip-count {
+  font-size: 8.2px;
+  color: #f1c40f;
+  min-width: 18px;
+  text-align: center;
+  font-weight: bold;
+}
+
+.btn-perk-step {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid #34495e;
+  background: #1e272e;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: bold;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+}
+.btn-perk-step.btn-perk-plus {
+  background: #27ae60;
+  border-color: #2ecc71;
+}
+.btn-perk-step.btn-perk-minus {
+  background: #c0392b;
+  border-color: #e74c3c;
+}
+.btn-perk-step:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Фіксована панель телеметрії (FPS та PING) у лівому нижньому куті браузера */
+.telemetry-panel {
+  position: fixed;
+  left: 14px;
+  bottom: 14px;
+  z-index: 95;
+  background: rgba(11, 14, 20, 0.88);
+  border: 1.5px solid #2c3e50;
+  border-radius: 5px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 8px;
+  color: #bdc3c7;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+.telemetry-sep {
+  color: #485460;
+}
+
+.telemetry-val {
+  font-weight: bold;
+}
+
+.telemetry-val.fps-good,
+.telemetry-val.ping-good {
+  color: #2ecc71;
+}
+
+.telemetry-val.fps-warn,
+.telemetry-val.ping-warn {
+  color: #f1c40f;
+}
+
+.telemetry-val.fps-bad,
+.telemetry-val.ping-bad {
+  color: #e74c3c;
+}
+
+.telemetry-val.ping-local {
+  color: #00d2d3;
+}
+
+/* ==========================================
+   V16: SURRENDER BUTTON, MAP PREVIEWS & MAP EDITOR BLOCK CATALOG (POLYGON STYLE)
+   ========================================== */
+.btn-surrender {
+  background: #c0392b !important;
+  border-color: #ff7675 !important;
+  color: #ffffff !important;
+}
+.btn-surrender:hover {
+  background: #e74c3c !important;
+}
+
+.map-preview-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #0c1016;
+  border: 2px solid #34495e;
+  border-radius: 6px;
+  padding: 6px 8px;
+  min-width: 146px;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.75);
+}
+
+.rematch-map-preview-box {
+  min-width: 136px;
+  padding: 5px 6px;
+}
+
+.map-preview-canvas {
+  display: block;
+  width: 120px;
+  height: 120px;
+  border: 1.5px solid #485460;
+  border-radius: 4px;
+  background: #0f1419;
+  image-rendering: pixelated;
+}
+
+.rematch-map-preview-box .map-preview-canvas {
+  width: 104px;
+  height: 104px;
+}
+
+.map-preview-caption {
+  font-size: 6.8px;
+  color: #95a5a6;
+  margin-top: 4px;
+  letter-spacing: 0.4px;
+}
+
+/* Каталог вибору блоків у Редакторі Карт (як у Полігоні) */
+.palette-container {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px;
+  background: rgba(14, 20, 28, 0.96);
+  border: 2px solid #8e44ad;
+  border-radius: 7px;
+}
+
+.editor-palette-search-row {
+  width: 100%;
+}
+
+.editor-block-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 0 !important;
+  padding: 8px 12px !important;
+  font-size: 9px !important;
+  background: #101620 !important;
+  border: 1.5px solid #8e44ad !important;
+  color: #ecf0f1 !important;
+  border-radius: 5px !important;
+}
+.editor-block-search-input:focus {
+  border-color: #d980fa !important;
+  box-shadow: 0 0 8px rgba(142, 68, 173, 0.45);
+}
+
+.editor-blocks-catalog {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 7px;
+  max-height: 250px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  text-align: left;
+}
+
+.editor-block-chip {
+  cursor: pointer;
+  padding: 6px 8px;
+  gap: 8px;
+  border: 1.5px solid #34495e;
+  background: linear-gradient(135deg, rgba(44, 62, 80, 0.22), rgba(19, 25, 34, 0.96));
+}
+
+.editor-block-chip:hover {
+  border-color: #a29bfe;
+  background: linear-gradient(135deg, rgba(142, 68, 173, 0.22), rgba(24, 32, 44, 0.98));
+}
+
+.editor-block-chip.active {
+  border: 2px solid #f1c40f !important;
+  background: linear-gradient(135deg, rgba(241, 196, 15, 0.24), rgba(24, 32, 44, 0.98)) !important;
+  box-shadow: 0 0 12px rgba(241, 196, 15, 0.45), inset 0 0 8px rgba(241, 196, 15, 0.18) !important;
+}
+
+.editor-block-preview-canvas {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  border-radius: 4px;
+  border: 1px solid #485460;
+  background: #0f1419;
+  image-rendering: pixelated;
+  flex-shrink: 0;
+}
+
+.editor-block-chip.active .editor-block-preview-canvas {
+  border-color: #f1c40f;
+}
+
+.editor-block-cat-badge {
+  font-size: 6.8px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: rgba(142, 68, 173, 0.25);
+  color: #e056fd;
+  border: 1px solid rgba(142, 68, 173, 0.65);
+  white-space: nowrap;
+}
+
+.editor-block-chip.active .editor-block-cat-badge {
+  background: #f1c40f;
+  color: #111;
+  border-color: #ffeaa7;
+}
+
+
+
