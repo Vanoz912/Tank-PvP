@@ -8,7 +8,7 @@
  * - Авторитетний розрахунок взаємної видимості гравців (updatePlayersVisibilityState)
  */
 
-import { TILE_BY_ID } from './tiles.js?v=20261011_v17';
+import { TILE_BY_ID, getEffectiveTile, getEffectiveTileId, getEffectiveCellTile, isCellEffectiveHighBush } from './tiles.js?v=20261011_v17';
 import { TURRET_TYPES } from './config.js?v=20261011_v17';
 import Network from './network.js?v=20261011_v17';
 import {
@@ -18,6 +18,8 @@ import {
   tileSize,
   p1Tank,
   p2Tank,
+  p3Tank,
+  p4Tank,
   gameState
 } from './state.js?v=20261011_v17';
 
@@ -40,9 +42,8 @@ export function checkLineOfSight(x1, y1, x2, y2, map) {
     const r = Math.floor(py / tileSize);
 
     if (r >= 0 && r < gridRows && c >= 0 && c < gridCols) {
-      const tileId = map[r][c];
-      const block = TILE_BY_ID[tileId];
-      if (block && block.blocksBullet) {
+      const block = getEffectiveCellTile(r, c, gameState);
+      if (block && block.blocksBullet && !block.transparentVision) {
         return false;
       }
     }
@@ -76,10 +77,11 @@ export function isInVisionCone(observer, targetX, targetY, fovDegrees = null) {
 
 /**
  * Перевірка, чи знаходиться танк у "низьких кущах" (TILE_TYPES.LOW_BUSH, id: 9):
- * Коли танк у низьких кущах (>= 50% площі / 3 з 5 точок), він НЕ може бачити ворога (окрім ВХ),
- * проте ворог БАЧИТЬ його! Якщо поєднати низькі кущі + високі кущі — ні ти не бачиш ворога, ні ворог тебе.
+ * Коли танк у низьких кущах (>= 50% площі / 3 з 5 точок), він НЕ може бачити ворога (окрім ВХ або Середнього корпусу),
+ * проте ворог БАЧИТЬ його (якщо це не Легкий корпус, який маскується в низьких кущах)!
  */
-export function isTankInLowBushes(tank, map, tileSizeVal = tileSize) {
+export function isTankInLowBushes(tank, mapOrGameState, tileSizeVal = tileSize) {
+  const map = (mapOrGameState && Array.isArray(mapOrGameState.map)) ? mapOrGameState.map : mapOrGameState;
   if (!tank || tank.isDead || !map || map.length === 0) return false;
   if (typeof tank.isOnLowBush === 'function') {
     return tank.isOnLowBush(map, tileSizeVal);
@@ -101,10 +103,20 @@ export function isTankInLowBushes(tank, map, tileSizeVal = tileSize) {
     const c = Math.floor(pt.x / tileSizeVal);
     const r = Math.floor(pt.y / tileSizeVal);
     if (r >= 0 && r < map.length && c >= 0 && c < map[0].length) {
-      if (map[r][c] === 9) count++;
+      if (getEffectiveTileId(map[r][c], gameState) === 9) count++;
     }
   }
   return count >= 3;
+}
+
+/**
+ * Перевірка, чи засліплений спостерігач низькими кущами:
+ * Середній корпус (hullType === 'standard' або seeInLowBush === true) та Дерев'яний корпус (wooden) БАЧАТЬ у низьких кущах!
+ */
+export function isObserverBlindedByLowBushes(observer, mapOrGameState, tileSizeVal = tileSize) {
+  if (!observer || observer.isDead) return false;
+  if (observer.hullType === 'standard' || observer.hullType === 'wooden' || observer.seeInLowBush) return false;
+  return isTankInLowBushes(observer, mapOrGameState, tileSizeVal);
 }
 
 /**
@@ -133,6 +145,7 @@ export function isVisionBlockedByEnemySmoke(observerId, x1, y1, x2, y2, smokeClo
 
 /**
  * Перевірка видимості снаряда для спостерігача (Тактичний туман для куль)
+ * З урахуванням події «Реверсивне спостереження» (reverse_vision) та ВХ
  */
 export function canPlayerSeeBullet(observer, bullet, map, tileSizeVal = tileSize) {
   if (!observer || !bullet) return false;
@@ -142,27 +155,43 @@ export function canPlayerSeeBullet(observer, bullet, map, tileSizeVal = tileSize
 
   if (observer.isDead) return false;
   if (observer.hasWallhack) return true;
-  if (bullet.invisibleToEnemy) return false;
-  if (isTankInLowBushes(observer, map, tileSizeVal)) return false;
 
-  const cx = observer.x + observer.size / 2;
-  const cy = observer.y + observer.size / 2;
-  if (isVisionBlockedByEnemySmoke(observer.id, cx, cy, bullet.x, bullet.y)) return false;
+  const isReverseVision = gameState && gameState.currentMapEvent === 'reverse_vision';
 
-  const dist = Math.hypot(bullet.x - cx, bullet.y - cy);
-  const proximityDist = Math.min(PROXIMITY_REVEAL_DIST, tileSizeVal * 1.5);
+  let normalVisible = true;
+  if (bullet.invisibleToEnemy) {
+    normalVisible = false;
+  } else if (isObserverBlindedByLowBushes(observer, map, tileSizeVal)) {
+    normalVisible = false;
+  } else {
+    const cx = observer.x + observer.size / 2;
+    const cy = observer.y + observer.size / 2;
+    if (isVisionBlockedByEnemySmoke(observer.id, cx, cy, bullet.x, bullet.y)) {
+      normalVisible = false;
+    } else {
+      const dist = Math.hypot(bullet.x - cx, bullet.y - cy);
+      const proximityDist = Math.min(PROXIMITY_REVEAL_DIST, tileSizeVal * 1.5);
+      const fov = observer.fov || (TURRET_TYPES[observer.turretType] && TURRET_TYPES[observer.turretType].fov) || 90;
+      const inCone = isInVisionCone(observer, bullet.x, bullet.y, fov);
+      const inProximity = dist <= proximityDist;
 
-  const fov = observer.fov || (TURRET_TYPES[observer.turretType] && TURRET_TYPES[observer.turretType].fov) || 90;
-  const inCone = isInVisionCone(observer, bullet.x, bullet.y, fov);
-  const inProximity = dist <= proximityDist;
+      if (!inCone && !inProximity) {
+        normalVisible = false;
+      } else if (!checkLineOfSight(cx, cy, bullet.x, bullet.y, map)) {
+        normalVisible = false;
+      }
+    }
+  }
 
-  if (!inCone && !inProximity) return false;
-
-  return checkLineOfSight(cx, cy, bullet.x, bullet.y, map);
+  if (isReverseVision) {
+    return !normalVisible;
+  }
+  return normalVisible;
 }
 
 /**
  * Перевірка видимості слідів гусениць (Fog of War для слідів)
+ * З урахуванням події «Реверсивне спостереження» (reverse_vision) та ВХ
  */
 export function canPlayerSeeTrack(observer, track, map, tileSizeVal = tileSize) {
   if (!observer || !track) return false;
@@ -172,22 +201,38 @@ export function canPlayerSeeTrack(observer, track, map, tileSizeVal = tileSize) 
 
   if (observer.isDead) return false;
   if (observer.hasWallhack) return true;
-  if (track.invisibleToEnemy) return false;
-  if (isTankInLowBushes(observer, map, tileSizeVal)) return false;
 
-  const cx = observer.x + observer.size / 2;
-  const cy = observer.y + observer.size / 2;
-  if (isVisionBlockedByEnemySmoke(observer.id, cx, cy, track.x, track.y)) return false;
+  const isReverseVision = gameState && gameState.currentMapEvent === 'reverse_vision';
 
-  const dist = Math.hypot(track.x - cx, track.y - cy);
-  const proximityDist = Math.min(PROXIMITY_REVEAL_DIST, tileSizeVal * 1.5);
-  const fov = observer.fov || (TURRET_TYPES[observer.turretType] && TURRET_TYPES[observer.turretType].fov) || 90;
-  const inCone = isInVisionCone(observer, track.x, track.y, fov);
-  const inProximity = dist <= proximityDist;
+  let normalVisible = true;
+  if (track.invisibleToEnemy) {
+    normalVisible = false;
+  } else if (isObserverBlindedByLowBushes(observer, map, tileSizeVal)) {
+    normalVisible = false;
+  } else {
+    const cx = observer.x + observer.size / 2;
+    const cy = observer.y + observer.size / 2;
+    if (isVisionBlockedByEnemySmoke(observer.id, cx, cy, track.x, track.y)) {
+      normalVisible = false;
+    } else {
+      const dist = Math.hypot(track.x - cx, track.y - cy);
+      const proximityDist = Math.min(PROXIMITY_REVEAL_DIST, tileSizeVal * 1.5);
+      const fov = observer.fov || (TURRET_TYPES[observer.turretType] && TURRET_TYPES[observer.turretType].fov) || 90;
+      const inCone = isInVisionCone(observer, track.x, track.y, fov);
+      const inProximity = dist <= proximityDist;
 
-  if (!inCone && !inProximity) return false;
+      if (!inCone && !inProximity) {
+        normalVisible = false;
+      } else if (!checkLineOfSight(cx, cy, track.x, track.y, map)) {
+        normalVisible = false;
+      }
+    }
+  }
 
-  return checkLineOfSight(cx, cy, track.x, track.y, map);
+  if (isReverseVision) {
+    return !normalVisible;
+  }
+  return normalVisible;
 }
 
 /**
@@ -210,7 +255,7 @@ export function canPlayerSeeMine(observer, mine, map, tileSizeVal = tileSize) {
   if (!observer.hasLingerVision) return false;
 
   // Виключення 2: "Слід виявлення" — тільки в полі зору
-  if (isTankInLowBushes(observer, map, tileSizeVal)) return false;
+  if (isObserverBlindedByLowBushes(observer, map, tileSizeVal)) return false;
 
   const cx = observer.x + observer.size / 2;
   const cy = observer.y + observer.size / 2;
@@ -230,46 +275,69 @@ export function canPlayerSeeMine(observer, mine, map, tileSizeVal = tileSize) {
 /**
  * Перевірка, чи бачить гравець (observer) спалах або дим від пострілу (MuzzleFlash / SmokeParticle):
  * - Власний дим/спалах від пострілу видно завжди
- * - Ворожий дим/спалах видно ТІЛЬКИ тоді, коли сам ворожий танк видимий для спостерігача (і кулі не невидимі)
+ * - Ворожий дим/спалах у звичайному режимі видно ТІЛЬКИ тоді, коли сам ворожий танк видимий для спостерігача (і кулі не невидимі)
+ * - У режимі «Реверсивне спостереження» (reverse_vision) видимість інвертується (ВХ бачить завжди)
  */
 export function canPlayerSeeMuzzleEffect(observer, effect, map, tileSizeVal = tileSize, canSeeEnemyOverride = null) {
   if (!observer || !effect) return false;
   if (!effect.ownerId || effect.ownerId === observer.id) return true;
   if (observer.isDead) return false;
-  if (effect.hiddenFromEnemy) return false;
-  if (canSeeEnemyOverride === false) return false;
   if (observer.hasWallhack) return true;
 
-  const hasActiveLinger = Boolean(observer.hasLingerVision && observer.lingerTimer > 0);
-  if (canSeeEnemyOverride === true && hasActiveLinger) return true;
+  const isReverseVision = gameState && gameState.currentMapEvent === 'reverse_vision';
 
-  if (isTankInLowBushes(observer, map, tileSizeVal)) return false;
+  let normalVisible = true;
+  if (effect.hiddenFromEnemy) {
+    normalVisible = false;
+  } else if (isObserverBlindedByLowBushes(observer, map, tileSizeVal)) {
+    normalVisible = false;
+  } else {
+    const cx = observer.x + observer.size / 2;
+    const cy = observer.y + observer.size / 2;
+    if (isVisionBlockedByEnemySmoke(observer.id, cx, cy, effect.x, effect.y, gameState.smokeClouds)) {
+      normalVisible = false;
+    } else {
+      const allTanks = (gameState && Array.isArray(gameState.tanks) && gameState.tanks.length > 0)
+        ? gameState.tanks
+        : [p1Tank, p2Tank, p3Tank, p4Tank].filter(Boolean);
+      const shooterTank = allTanks.find(t => t && t.id === effect.ownerId);
+      const meleeDist = Math.min(PROXIMITY_REVEAL_DIST, tileSizeVal * 1.25);
 
-  const cx = observer.x + observer.size / 2;
-  const cy = observer.y + observer.size / 2;
-  if (isVisionBlockedByEnemySmoke(observer.id, cx, cy, effect.x, effect.y, gameState.smokeClouds)) return false;
+      if (shooterTank && !shooterTank.isDead) {
+        const sc = shooterTank.getCenter();
+        const tankDist = Math.hypot(sc.x - cx, sc.y - cy);
+        if (isVisionBlockedByEnemySmoke(observer.id, cx, cy, sc.x, sc.y, gameState.smokeClouds)) {
+          normalVisible = false;
+        } else if (isTankCamouflaged(shooterTank, gameState.bushes, map, tileSizeVal) && tankDist > meleeDist) {
+          normalVisible = false;
+        }
+      }
 
-  const shooterTank = effect.ownerId === 1 ? p1Tank : (effect.ownerId === 2 ? p2Tank : null);
-  const meleeDist = Math.min(PROXIMITY_REVEAL_DIST, tileSizeVal * 1.25);
+      if (normalVisible) {
+        const dist = Math.hypot(effect.x - cx, effect.y - cy);
+        const proximityDist = Math.min(PROXIMITY_REVEAL_DIST, tileSizeVal * 1.35);
+        const fov = observer.fov || (TURRET_TYPES[observer.turretType] && TURRET_TYPES[observer.turretType].fov) || 90;
+        const inCone = isInVisionCone(observer, effect.x, effect.y, fov);
+        const inProximity = dist <= proximityDist;
 
-  if (shooterTank && !shooterTank.isDead) {
-    const sc = shooterTank.getCenter();
-    const tankDist = Math.hypot(sc.x - cx, sc.y - cy);
-    if (isVisionBlockedByEnemySmoke(observer.id, cx, cy, sc.x, sc.y, gameState.smokeClouds)) return false;
-    if (isTankCamouflaged(shooterTank, gameState.bushes, map, tileSizeVal) && tankDist > meleeDist) {
-      return false;
+        if (!inCone && !inProximity) {
+          normalVisible = false;
+        } else if (!checkLineOfSight(cx, cy, effect.x, effect.y, map)) {
+          normalVisible = false;
+        }
+      }
     }
   }
 
-  const dist = Math.hypot(effect.x - cx, effect.y - cy);
-  const proximityDist = Math.min(PROXIMITY_REVEAL_DIST, tileSizeVal * 1.35);
-  const fov = observer.fov || (TURRET_TYPES[observer.turretType] && TURRET_TYPES[observer.turretType].fov) || 90;
-  const inCone = isInVisionCone(observer, effect.x, effect.y, fov);
-  const inProximity = dist <= proximityDist;
+  if (isReverseVision) {
+    return !normalVisible;
+  }
 
-  if (!inCone && !inProximity) return false;
+  if (canSeeEnemyOverride === false) return false;
+  const hasActiveLinger = Boolean(observer.hasLingerVision && ((observer.lingerTimer > 0) || (observer.lingerTimers && observer.lingerTimers[effect.ownerId] > 0)));
+  if (canSeeEnemyOverride === true && hasActiveLinger) return true;
 
-  return checkLineOfSight(cx, cy, effect.x, effect.y, map);
+  return normalVisible;
 }
 
 /**
@@ -306,7 +374,7 @@ export function isTankInSmoke(tank, smokeClouds = (gameState && gameState.smokeC
  * перебувала всередині кущів, а не просто ледь зачепила край!
  */
 export function isTankInBushes(tank, bushes, tileSizeVal = tileSize) {
-  if (!tank || tank.isDead || !bushes || bushes.length === 0) return false;
+  if (!tank || tank.isDead) return false;
   const inset = Math.max(3, Math.floor(tank.size * 0.15));
   const cx = tank.x + tank.size / 2;
   const cy = tank.y + tank.size / 2;
@@ -324,9 +392,7 @@ export function isTankInBushes(tank, bushes, tileSizeVal = tileSize) {
   for (const pt of samplePoints) {
     const c = Math.floor(pt.x / tileSizeVal);
     const r = Math.floor(pt.y / tileSizeVal);
-    if (r >= 0 && r < bushes.length && c >= 0 && c < bushes[0].length) {
-      if (bushes[r][c] === 1) inCount++;
-    }
+    if (isCellEffectiveHighBush(r, c, gameState)) inCount++;
   }
 
   // Щонайменше 3 з 5 точок (понад 50% площі танка) повинні знаходитися в кущах
@@ -355,8 +421,13 @@ export function isTankInWaterCamo(tank, map, tileSizeVal = tileSize) {
     const c = Math.floor(pt.x / tileSizeVal);
     const r = Math.floor(pt.y / tileSizeVal);
     if (r >= 0 && r < map.length && c >= 0 && c < map[0].length) {
-      const tid = map[r][c];
-      if (tid === 3 || tid === 8) inWaterCount++;
+      const tid = getEffectiveTileId(map[r][c], gameState);
+      const isBushWater = Boolean(
+        gameState && gameState.currentMapEvent === 'shuffled_blocks' &&
+        gameState.bushes && gameState.bushes[r] && gameState.bushes[r][c] === 1 &&
+        (getEffectiveTileId(4, gameState) === 3 || getEffectiveTileId(4, gameState) === 8)
+      );
+      if (tid === 3 || tid === 8 || isBushWater) inWaterCount++;
     }
   }
 
@@ -364,80 +435,268 @@ export function isTankInWaterCamo(tank, map, tileSizeVal = tileSize) {
 }
 
 /**
- * Комбінована перевірка маскування танка (у високих кущах або у воді з перком water_camouflage)
+ * Перевірка вродженого маскування Легкого корпусу (hullType === 'light') у низьких кущах (id: 9) та мілкій воді (id: 8)
+ */
+export function isTankInLightHullCamo(tank, map, tileSizeVal = tileSize) {
+  if (!tank || tank.isDead || !map || map.length === 0) return false;
+  const isLight = tank.hullType === 'light' || Boolean(tank.camoInLowBushAndShallowWater);
+  const isWooden = tank.hullType === 'wooden' || Boolean(tank.camoInLowBush);
+  if (!isLight && !isWooden) return false;
+
+  const inset = Math.max(3, Math.floor(tank.size * 0.15));
+  const cx = tank.x + tank.size / 2;
+  const cy = tank.y + tank.size / 2;
+
+  const samplePoints = [
+    { x: cx, y: cy },
+    { x: tank.x + inset, y: tank.y + inset },
+    { x: tank.x + tank.size - inset, y: tank.y + inset },
+    { x: tank.x + inset, y: tank.y + tank.size - inset },
+    { x: tank.x + tank.size - inset, y: tank.y + tank.size - inset }
+  ];
+
+  let camoCount = 0;
+  for (const pt of samplePoints) {
+    const c = Math.floor(pt.x / tileSizeVal);
+    const r = Math.floor(pt.y / tileSizeVal);
+    if (r >= 0 && r < map.length && c >= 0 && c < map[0].length) {
+      const tid = getEffectiveTileId(map[r][c], gameState);
+      const isBushLowOrWater = Boolean(
+        gameState && gameState.currentMapEvent === 'shuffled_blocks' &&
+        gameState.bushes && gameState.bushes[r] && gameState.bushes[r][c] === 1 &&
+        (getEffectiveTileId(4, gameState) === 9 || (isLight && getEffectiveTileId(4, gameState) === 8))
+      );
+      // Дерев'яний корпус маскується у низьких кущах (9), Легкий — у низьких кущах (9) та мілкій воді (8)
+      if (tid === 9 || (isLight && tid === 8) || isBushLowOrWater) camoCount++;
+    }
+  }
+
+  return camoCount >= 3;
+}
+
+/**
+ * Перевірка оптичного маскування башти «Снайпер» (turretType === 'sniper'):
+ * Через 1 секунду (60 кадрів), коли корпус стоїть нерухомо (повертати башту і стріляти можна), танк стає невидимим.
+ */
+export function isTankSniperCamouflaged(tank) {
+  if (!tank || tank.isDead || tank.turretType !== 'sniper') return false;
+  return (tank.sniperStealthTimer || 0) >= 120;
+}
+
+/**
+ * Перевірка видимості трасуючого сліду снайперської кулі (TracerTrail)
+ * З урахуванням події «Реверсивне спостереження» (reverse_vision) та ВХ
+ */
+export function canPlayerSeeTracer(observer, tracer, map, tileSizeVal = tileSize) {
+  if (!observer || !tracer) return false;
+  if (!tracer.ownerId || tracer.ownerId === observer.id) return true;
+  if (observer.isDead) return false;
+  if (observer.hasWallhack) return true;
+
+  const isReverseVision = gameState && gameState.currentMapEvent === 'reverse_vision';
+
+  let normalVisible = false;
+  if (!tracer.hiddenFromEnemy && !isObserverBlindedByLowBushes(observer, map, tileSizeVal)) {
+    const cx = observer.x + observer.size / 2;
+    const cy = observer.y + observer.size / 2;
+    const proximityDist = Math.min(PROXIMITY_REVEAL_DIST, tileSizeVal * 1.5);
+    const fov = observer.fov || (TURRET_TYPES[observer.turretType] && TURRET_TYPES[observer.turretType].fov) || 90;
+
+    // Перевіряємо декілька точок вздовж траси снаряда
+    const samples = 6;
+    for (let i = 0; i <= samples; i++) {
+      const t = i / samples;
+      const px = tracer.x1 + (tracer.x2 - tracer.x1) * t;
+      const py = tracer.y1 + (tracer.y2 - tracer.y1) * t;
+      if (isVisionBlockedByEnemySmoke(observer.id, cx, cy, px, py)) continue;
+      const dist = Math.hypot(px - cx, py - cy);
+      const inCone = isInVisionCone(observer, px, py, fov);
+      const inProximity = dist <= proximityDist;
+      if ((inCone || inProximity) && checkLineOfSight(cx, cy, px, py, map)) {
+        normalVisible = true;
+        break;
+      }
+    }
+  }
+
+  if (isReverseVision) {
+    return !normalVisible;
+  }
+  return normalVisible;
+}
+
+/**
+ * Комбінована перевірка маскування танка (у високих кущах, у воді з water_camouflage, для Легкого корпусу в низьких кущах/мілкій воді або нерухомого Снайпера).
+ * Якщо активний Маяк Регенерації (beaconActiveTimer > 0), танк світиться і НЕ маскується!
  */
 export function isTankCamouflaged(tank, bushes, map, tileSizeVal = tileSize) {
-  return isTankInBushes(tank, bushes, tileSizeVal) || isTankInWaterCamo(tank, map, tileSizeVal);
+  if (!tank || tank.isDead) return false;
+  if ((tank.beaconActiveTimer || 0) > 0) return false;
+  return (
+    isTankInBushes(tank, bushes, tileSizeVal) ||
+    isTankInWaterCamo(tank, map, tileSizeVal) ||
+    isTankInLightHullCamo(tank, map, tileSizeVal) ||
+    isTankSniperCamouflaged(tank)
+  );
 }
 
 /**
  * Перевірка, чи потрібно малювати підсвітку (контур + світіння) для танка:
- * ТІЛЬКИ коли танк перекритий високими кущами або димовою завісою 3x3!
- * На воді (навіть із перком water_camouflage) підсвітка ВИМКНЕНА, бо танк і так добре видно.
+ * Коли танк перекритий високими кущами, димовою завісою 3x3, підсвічений Маяком Регенерації або у стелсі Снайпера!
  */
 export function shouldDrawTankOverlayHighlight(tank, bushes = (gameState && gameState.bushes), smokeClouds = (gameState && gameState.smokeClouds), tileSizeVal = tileSize, renderPos = null) {
   if (!tank || tank.isDead) return false;
-  return isTankInBushes(tank, bushes, tileSizeVal) || isTankInSmoke(tank, smokeClouds, renderPos);
+  return (
+    (tank.beaconActiveTimer || 0) > 0 ||
+    isTankSniperCamouflaged(tank) ||
+    isTankInBushes(tank, bushes, tileSizeVal) ||
+    isTankInSmoke(tank, smokeClouds, renderPos)
+  );
 }
 
 /**
- * Авторитетний розрахунок взаємної видимості гравців (LoS, FOV вежі, кущі, низькі кущі, дим 3x3, ВХ та Слід виявлення)
+ * Авторитетний розрахунок взаємної видимості гравців (LoS, FOV вежі, кущі, низькі кущі, дим 3x3, ВХ, Радар, Маяк та Слід виявлення)
  */
 export function updatePlayersVisibilityState() {
-  if (!gameState || !p1Tank || !p2Tank) return;
+  if (!gameState) return;
 
-  if (!p1Tank.isDead && !p2Tank.isDead) {
-    const c1 = p1Tank.getCenter();
-    const c2 = p2Tank.getCenter();
-    const dist = Math.hypot(c2.x - c1.x, c2.y - c1.y);
+  const allTanks = (gameState.tanks && gameState.tanks.length > 0)
+    ? gameState.tanks
+    : [p1Tank, p2Tank, p3Tank, p4Tank].filter(Boolean);
 
-    const p1Camouflaged = isTankCamouflaged(p1Tank, gameState.bushes, gameState.map, tileSize);
-    const p2Camouflaged = isTankCamouflaged(p2Tank, gameState.bushes, gameState.map, tileSize);
-
-    // Низькі кущі: ти не бачиш ворога, але ворог бачить тебе!
-    const p1InLowBush = isTankInLowBushes(p1Tank, gameState.map, tileSize);
-    const p2InLowBush = isTankInLowBushes(p2Tank, gameState.map, tileSize);
-
-    // Дим 3x3: ворожий дим закриває погляд ворогу, а власник бачить крізь свій дим
-    const p1BlockedBySmoke = isVisionBlockedByEnemySmoke(1, c1.x, c1.y, c2.x, c2.y, gameState.smokeClouds);
-    const p2BlockedBySmoke = isVisionBlockedByEnemySmoke(2, c2.x, c2.y, c1.x, c1.y, gameState.smokeClouds);
-
-    const directLoS = checkLineOfSight(c1.x, c1.y, c2.x, c2.y, gameState.map);
-
-    // Відстань розкриття впритул (ближній бій / контакт корпусами)
-    const meleeDist = Math.min(PROXIMITY_REVEAL_DIST, tileSize * 1.25);
-
-    // Конус погляду орієнтується за кутом вежі та типом гармати (динамічний FOV)
-    const p1Fov = p1Tank.fov || (TURRET_TYPES[p1Tank.turretType] && TURRET_TYPES[p1Tank.turretType].fov) || 90;
-    const p2Fov = p2Tank.fov || (TURRET_TYPES[p2Tank.turretType] && TURRET_TYPES[p2Tank.turretType].fov) || 90;
-    const p1HasVisionCone = isInVisionCone(p1Tank, c2.x, c2.y, p1Fov);
-    const p2HasVisionCone = isInVisionCone(p2Tank, c1.x, c1.y, p2Fov);
-
-    // Пряма видимість або Божественна здібність "ВХ (бачити ворога скрізь)"
-    const rawP1SeeP2 = Boolean(p1Tank.hasWallhack) ||
-      (!p1InLowBush && !p1BlockedBySmoke && (p1HasVisionCone || dist <= meleeDist) && directLoS && (!p2Camouflaged || dist <= meleeDist));
-    const rawP2SeeP1 = Boolean(p2Tank.hasWallhack) ||
-      (!p2InLowBush && !p2BlockedBySmoke && (p2HasVisionCone || dist <= meleeDist) && directLoS && (!p1Camouflaged || dist <= meleeDist));
-
-    // Рідкісна здібність linger_vision_1s: коли ворог зникає, ти ще можеш його бачити 1 секунду (60 кадрів)
-    if (rawP1SeeP2) {
-      p1Tank.lingerTimer = p1Tank.hasLingerVision ? 60 : 0;
-    } else if (p1Tank.hasLingerVision && p1Tank.lingerTimer > 0) {
-      p1Tank.lingerTimer--;
-    }
-    const p1CanSeeP2 = rawP1SeeP2 || (Boolean(p1Tank.hasLingerVision) && p1Tank.lingerTimer > 0);
-
-    if (rawP2SeeP1) {
-      p2Tank.lingerTimer = p2Tank.hasLingerVision ? 60 : 0;
-    } else if (p2Tank.hasLingerVision && p2Tank.lingerTimer > 0) {
-      p2Tank.lingerTimer--;
-    }
-    const p2CanSeeP1 = rawP2SeeP1 || (Boolean(p2Tank.hasLingerVision) && p2Tank.lingerTimer > 0);
-
-    gameState.visibility = { p1CanSeeP2, p2CanSeeP1 };
-    gameState.isEnemyVisible = Network.myPlayerId === 1 ? p1CanSeeP2 : p2CanSeeP1;
-  } else {
-    gameState.visibility = { p1CanSeeP2: false, p2CanSeeP1: false };
+  if (allTanks.length === 0) {
+    gameState.visibility = { p1CanSeeP2: false, p2CanSeeP1: false, matrix: {} };
     gameState.isEnemyVisible = false;
+    return;
   }
+
+  const isDarkness = gameState && gameState.currentMapEvent === 'darkness';
+  const isReverseVision = gameState && gameState.currentMapEvent === 'reverse_vision';
+  const meleeDist = Math.min(PROXIMITY_REVEAL_DIST, tileSize * 1.25);
+  const darknessProximity = Math.min(PROXIMITY_REVEAL_DIST, tileSize * 2.2);
+
+  // 1. Скидання нерухомого стелсу снайпера при контакті впритул
+  for (let i = 0; i < allTanks.length; i++) {
+    const t1 = allTanks[i];
+    if (!t1 || t1.isDead) continue;
+    const c1 = t1.getCenter();
+    for (let j = i + 1; j < allTanks.length; j++) {
+      const t2 = allTanks[j];
+      if (!t2 || t2.isDead) continue;
+      const c2 = t2.getCenter();
+      const dist = Math.hypot(c2.x - c1.x, c2.y - c1.y);
+      if (dist <= meleeDist) {
+        if (t1.turretType === 'sniper') t1.sniperStealthTimer = 0;
+        if (t2.turretType === 'sniper') t2.sniperStealthTimer = 0;
+      }
+    }
+  }
+
+  // 2. Розрахунок прямої видимості між кожною парою (observer -> target)
+  const directVis = {};
+  for (const obs of allTanks) {
+    if (!obs) continue;
+    directVis[obs.id] = directVis[obs.id] || {};
+    const c1 = obs.getCenter();
+    const obsBlinded = isObserverBlindedByLowBushes(obs, gameState.map, tileSize);
+    const obsFov = obs.fov || (TURRET_TYPES[obs.turretType] && TURRET_TYPES[obs.turretType].fov) || 90;
+
+    for (const tgt of allTanks) {
+      if (!tgt) continue;
+      if (tgt.id === obs.id) {
+        directVis[obs.id][tgt.id] = true;
+        continue;
+      }
+      if (obs.isDead || tgt.isDead) {
+        directVis[obs.id][tgt.id] = false;
+        continue;
+      }
+      // Союзники завжди бачать один одного
+      if (tgt.team === obs.team) {
+        directVis[obs.id][tgt.id] = true;
+        continue;
+      }
+
+      const c2 = tgt.getCenter();
+      const dist = Math.hypot(c2.x - c1.x, c2.y - c1.y);
+      const tgtCamouflaged = isTankCamouflaged(tgt, gameState.bushes, gameState.map, tileSize);
+      const obsBlockedBySmoke = isVisionBlockedByEnemySmoke(obs.id, c1.x, c1.y, c2.x, c2.y, gameState.smokeClouds);
+      const directLoS = checkLineOfSight(c1.x, c1.y, c2.x, c2.y, gameState.map);
+      const obsHasVisionCone = isInVisionCone(obs, c2.x, c2.y, obsFov);
+      const obsInDarknessZone = !isDarkness || (dist <= darknessProximity) || obsHasVisionCone;
+
+      const normalLoS = (obsInDarknessZone && !obsBlinded && !obsBlockedBySmoke && (obsHasVisionCone || dist <= meleeDist) && directLoS && (!tgtCamouflaged || dist <= meleeDist));
+      const normalSee = (obs.spotActiveTimer || 0) > 0 || (tgt.beaconActiveTimer || 0) > 0 || normalLoS;
+
+      let canSee = false;
+      if (isReverseVision) {
+        canSee = Boolean(obs.hasWallhack) || !normalSee;
+      } else {
+        canSee = Boolean(obs.hasWallhack) || normalSee;
+      }
+      directVis[obs.id][tgt.id] = canSee;
+    }
+  }
+
+  // 3. Спільний тактичний огляд (Shared Vision) між союзниками по команді
+  const sharedVisionEnabled = Boolean(gameState.teamSettings && gameState.teamSettings.sharedVision);
+  const effectiveVis = {};
+  for (const obs of allTanks) {
+    if (!obs) continue;
+    effectiveVis[obs.id] = effectiveVis[obs.id] || {};
+    for (const tgt of allTanks) {
+      if (!tgt) continue;
+      if (obs.isDead || tgt.isDead) {
+        effectiveVis[obs.id][tgt.id] = false;
+        continue;
+      }
+      if (tgt.team === obs.team) {
+        effectiveVis[obs.id][tgt.id] = true;
+        continue;
+      }
+
+      let canSeeTgt = Boolean(directVis[obs.id] && directVis[obs.id][tgt.id]);
+      if (!canSeeTgt && sharedVisionEnabled) {
+        // Перевіряємо, чи будь-який живий союзник бачить цю ціль
+        const allySees = allTanks.some(ally => ally && !ally.isDead && ally.team === obs.team && directVis[ally.id] && directVis[ally.id][tgt.id]);
+        if (allySees) {
+          canSeeTgt = true;
+        }
+      }
+      effectiveVis[obs.id][tgt.id] = canSeeTgt;
+    }
+  }
+
+  // 4. Підтримка linger_vision_1s (Слід виявлення)
+  for (const obs of allTanks) {
+    if (!obs) continue;
+    if (!obs.hasLingerVision) continue;
+    if (!obs.lingerTimers) obs.lingerTimers = {};
+    for (const tgt of allTanks) {
+      if (!tgt || tgt.team === obs.team) continue;
+      const rawSee = Boolean(effectiveVis[obs.id] && effectiveVis[obs.id][tgt.id]);
+      if (rawSee) {
+        obs.lingerTimers[tgt.id] = 60;
+      } else if (obs.lingerTimers[tgt.id] > 0) {
+        obs.lingerTimers[tgt.id]--;
+        effectiveVis[obs.id][tgt.id] = true;
+      }
+    }
+  }
+
+  // 5. Збереження у gameState.visibility
+  const p1CanSeeP2 = Boolean(effectiveVis[1] && effectiveVis[1][2]);
+  const p2CanSeeP1 = Boolean(effectiveVis[2] && effectiveVis[2][1]);
+  gameState.visibility = {
+    p1CanSeeP2,
+    p2CanSeeP1,
+    matrix: effectiveVis,
+    canSee: (observerId, targetId) => Boolean(effectiveVis[observerId] && effectiveVis[observerId][targetId])
+  };
+
+  const myId = Network.myPlayerId || 1;
+  const myTank = allTanks.find(t => t && t.id === myId);
+  const myTeam = myTank ? myTank.team : myId;
+  const anyEnemyVisible = allTanks.some(t => t && !t.isDead && t.team !== myTeam && effectiveVis[myId] && effectiveVis[myId][t.id]);
+  gameState.isEnemyVisible = anyEnemyVisible;
 }
