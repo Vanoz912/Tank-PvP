@@ -81,44 +81,22 @@
 
     <!-- ==================== LOBBY SCREEN ==================== -->
     <div id="lobbyScreen" class="card">
+      <!-- Main Menu Initial View -->
       <div id="lobbyInitialView">
         <p style="font-size: 9px; color: #bdc3c7; line-height: 1.8; margin-bottom: 14px;">
           PvP танчики без серверів: пряме WebRTC P2P з'єднання, тактичний редактор власних карт і динамічні блоки.
         </p>
 
-        <!-- Host Map & Win Score Selection Row + Map Preview -->
-        <div class="loadout-row" style="margin-bottom: 6px; align-items: stretch;">
-          <div class="loadout-col" style="flex: 1.5;">
-            <label for="selectHostMap" class="form-label">🗺️ ОБЕРІТЬ КАРТУ ДЛЯ БОЮ:</label>
-            <select id="selectHostMap" class="select-field"></select>
-            <label for="selectHostWinScore" class="form-label" style="margin-top: 8px;">🏆 ДО СКІЛЬКОХ ПЕРЕМОГ:</label>
-            <select id="selectHostWinScore" class="select-field"></select>
-          </div>
-          <div class="map-preview-box">
-            <canvas id="hostMapPreviewCanvas" class="map-preview-canvas" width="150" height="150"></canvas>
-            <div class="map-preview-caption">Прев'ю карти</div>
-          </div>
-        </div>
-
-        <!-- Tank Loadout Selection (Hull & Turret) -->
-        <div class="loadout-selection-box">
-          <div class="loadout-header">⚙️ СПОРЯДЖЕННЯ ВАШОГО ТАНКА (ГРАВЕЦЬ 1):</div>
-          <div class="loadout-row">
-            <div class="loadout-col">
-              <label for="selectHull" class="form-label">🛡️ КОРПУС:</label>
-              <select id="selectHull" class="select-field loadout-select"></select>
-              <div id="hostHullStatsDesc" class="loadout-stats-desc"></div>
-            </div>
-            <div class="loadout-col">
-              <label for="selectTurret" class="form-label">💥 ДУЛО (ВЕЖА):</label>
-              <select id="selectTurret" class="select-field loadout-select"></select>
-              <div id="hostTurretStatsDesc" class="loadout-stats-desc"></div>
-            </div>
-          </div>
-        </div>
-
         <button id="btnHostGame" class="btn btn-create">
           ⚔️ СТВОРИТИ ГРУ (ХОСТ)
+        </button>
+
+        <button id="btnOpenLobbiesTab" class="btn btn-lobbies-open">
+          🌐 СПИСОК АКТИВНИХ ЛОБІ
+        </button>
+
+        <button id="btnStartTestMode" class="btn btn-test-mode">
+          🧪 ЗОНА ТЕСТУВАННЯ (ПОЛІГОН)
         </button>
 
         <button id="btnOpenEditor" class="btn btn-editor-open">
@@ -127,10 +105,6 @@
 
         <button id="btnOpenMechanics" class="btn btn-mechanics-open">
           📖 МЕХАНІКИ ГРИ
-        </button>
-
-        <button id="btnStartTestMode" class="btn btn-test-mode">
-          🧪 ЗОНА ТЕСТУВАННЯ (ПОЛІГОН)
         </button>
 
         <div class="divider">АБО ПРИЄДНАТИСЯ ВРУЧНУ</div>
@@ -143,74 +117,104 @@
         </div>
       </div>
 
-      <!-- Host Waiting View -->
-      <div id="lobbyHostView" class="hidden">
-        <h3 style="color: #f39c12; font-size: 13px; margin-bottom: 10px;">КІМНАТА ГОТОВА!</h3>
-        <p style="font-size: 9px; color: #bdc3c7; line-height: 1.6;">
-          Надішліть це посилання другу. Він обере танк та підключиться до бою:
-        </p>
-
-        <div class="link-box">
-          <input type="text" id="shareLinkInput" class="link-input" readonly />
-          <button id="btnCopyLink" class="btn btn-copy">📋 КОПІЮВАТИ</button>
+      <!-- Lobby Browser View (Active Lobbies Tab) -->
+      <div id="lobbyBrowserView" class="hidden">
+        <div class="lobbies-browser-header">
+          <h3 style="color: #00d2d3; font-size: 13px; margin: 0 0 6px 0;">🌐 АКТИВНІ ЛОБІ (P2P)</h3>
+          <p style="font-size: 9px; color: #bdc3c7; margin: 0 0 12px 0;">
+            Знайдені активні кімнати у вашій мережі / браузері:
+          </p>
         </div>
 
-        <div>
-          <span style="font-size: 9px; color: #7f8c8d;">ID кімнати: </span>
-          <span id="displayRoomId" class="room-badge">...</span>
-          <button id="btnCopyId" class="btn btn-tool" style="margin-left: 6px;">КОПІЮВАТИ ID</button>
+        <div id="activeLobbiesContainer" class="active-lobbies-list">
+          <div class="lobby-empty-placeholder">Пошук активних кімнат...</div>
         </div>
 
-        <div class="status-text">
-          ⏳ ОЧІКУВАННЯ ПІДКЛЮЧЕННЯ ДРУГОГО ГРАВЦЯ...
-        </div>
-
-        <div style="margin-top: 14px;">
-          <button id="btnHostBackToMenu" class="btn btn-tool">🏠 В ГОЛОВНЕ МЕНЮ</button>
+        <div class="lobbies-browser-actions">
+          <button id="btnRefreshLobbies" class="btn btn-tool">🔄 ОНОВИТИ СПИСОК</button>
+          <button id="btnBackFromLobbies" class="btn btn-tool">🏠 В ГОЛОВНЕ МЕНЮ</button>
         </div>
       </div>
 
-      <!-- Guest Setup View (Allows Player 2 to pick Map, Hull and Turret BEFORE match begins) -->
-      <div id="lobbyGuestSetupView" class="hidden">
-        <h3 style="color: #2ecc71; font-size: 13px; margin-bottom: 8px;">⚔️ ПІДГОТОВКА ДО БОЮ (ГРАВЕЦЬ 2)</h3>
-        <p style="font-size: 9px; color: #bdc3c7; line-height: 1.6; margin-bottom: 12px;">
-          Ви підключаєтесь до кімнати: <span id="guestDisplayRoomId" class="room-badge">...</span><br>
-          Оберіть карту, свій тип корпусу та дула перед початком матчу:
-        </p>
-
-        <div class="loadout-row" style="margin-bottom: 8px; align-items: stretch;">
-          <div class="loadout-col" style="flex: 1.5;">
-            <label for="selectGuestMap" class="form-label">🗺️ ОБЕРІТЬ КАРТУ (АБО КАРТУ ХОСТА):</label>
-            <select id="selectGuestMap" class="select-field"></select>
+      <!-- Dedicated Multiplayer Room Lobby (4 Players, Teams, Loadouts, Settings) -->
+      <div id="lobbyRoomView" class="hidden">
+        <div class="lobby-room-header">
+          <div class="lobby-room-title-row">
+            <span id="lobbyRoomBadge" class="room-badge">...</span>
+            <button id="btnCopyLobbyLink" class="btn btn-copy" style="padding: 6px 10px; font-size: 8px;">📋 ПОСИЛАННЯ</button>
+            <button id="btnCopyLobbyId" class="btn btn-tool" style="padding: 6px 10px; font-size: 8px;">КОПІЮВАТИ ID</button>
           </div>
-          <div class="map-preview-box">
-            <canvas id="guestMapPreviewCanvas" class="map-preview-canvas" width="140" height="140"></canvas>
-            <div class="map-preview-caption">Прев'ю карти</div>
+          <div id="lobbyRoleBadge" class="lobby-role-pill">👑 ХОСТ КІМНАТИ</div>
+        </div>
+
+        <!-- Host Settings Panel (Visible to Host, Read-only / summary for Guests) -->
+        <div id="lobbyHostSettingsBox" class="lobby-settings-box">
+          <div class="loadout-row" style="margin-bottom: 6px; align-items: stretch;">
+            <div class="loadout-col" style="flex: 1.5;">
+              <label for="selectHostMap" class="form-label">🗺️ КАРТА БОЮ:</label>
+              <select id="selectHostMap" class="select-field"></select>
+              <label for="selectHostWinScore" class="form-label" style="margin-top: 6px;">🏆 ДО СКІЛЬКОХ ПЕРЕМОГ:</label>
+              <select id="selectHostWinScore" class="select-field"></select>
+            </div>
+            <div class="map-preview-box">
+              <canvas id="hostMapPreviewCanvas" class="map-preview-canvas" width="160" height="160"></canvas>
+              <div id="mapSpawnsCountBadge" class="map-preview-caption">Спавнів: 4</div>
+            </div>
+          </div>
+
+          <!-- Modes & Team Tactical Options Grid -->
+          <div class="game-modes-box" style="margin-top: 4px;">
+            <div class="game-modes-label">🎮 РЕЖИМИ ТА КОМАНДНІ НАЛАШТУВАННЯ:</div>
+            <div class="game-modes-grid" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));">
+              <label class="mode-checkbox-pill">
+                <input type="checkbox" id="chkHostModePerks" data-mode-key="perks" checked />
+                <span>✨ Здібності</span>
+              </label>
+              <label class="mode-checkbox-pill">
+                <input type="checkbox" id="chkHostModeCurses" data-mode-key="curses" checked />
+                <span>☠️ Прокляття</span>
+              </label>
+              <label class="mode-checkbox-pill">
+                <input type="checkbox" id="chkHostModeMapEvents" data-mode-key="mapEvents" />
+                <span>🌋 Події на карті</span>
+              </label>
+              <label class="mode-checkbox-pill" title="Вогонь по своїх від усіх факторів: куля влучає в союзника, але завдає 0 шкоди">
+                <input type="checkbox" id="chkFriendlyFire" />
+                <span>🛡️ Вогонь по своїх</span>
+              </label>
+              <label class="mode-checkbox-pill" title="Союзники по команді бачать ворогів спільним поглядом">
+                <input type="checkbox" id="chkSharedVision" checked />
+                <span>👁️ Спільний огляд</span>
+              </label>
+            </div>
           </div>
         </div>
 
-        <div class="loadout-selection-box" style="border-color: #2ecc71;">
-          <div class="loadout-header" style="color: #2ecc71;">⚙️ СПОРЯДЖЕННЯ ВАШОГО ТАНКА (ГРАВЕЦЬ 2):</div>
-          <div class="loadout-row">
-            <div class="loadout-col">
-              <label for="selectGuestHull" class="form-label">🛡️ КОРПУС:</label>
-              <select id="selectGuestHull" class="select-field loadout-select"></select>
-              <div id="guestHullStatsDesc" class="loadout-stats-desc" style="border-left-color: #2ecc71;"></div>
-            </div>
-            <div class="loadout-col">
-              <label for="selectGuestTurret" class="form-label">💥 ДУЛО (ВЕЖА):</label>
-              <select id="selectGuestTurret" class="select-field loadout-select"></select>
-              <div id="guestTurretStatsDesc" class="loadout-stats-desc" style="border-left-color: #2ecc71;"></div>
-            </div>
+        <!-- 4 Player Slots Grid -->
+        <div class="lobby-slots-container">
+          <div class="form-label" style="margin-bottom: 6px; font-weight: bold; color: #f1c40f;">
+            👥 ГРАВЦІ ТА КОМАНДИ (ДО 4 ГРАВЦІВ):
+          </div>
+          <div id="lobbySlotsGrid" class="lobby-slots-grid">
+            <!-- Slot cards 1..4 dynamically generated by ui.js -->
           </div>
         </div>
 
-        <button id="btnGuestReadyJoin" class="btn btn-create" style="background: #27ae60; box-shadow: 4px 4px 0 #000; margin-top: 4px;">
-          ⚔️ ГОТОВИЙ ДО БОЮ (ПРИЄДНАТИСЯ)
-        </button>
+        <!-- Validation warning & actions -->
+        <div id="lobbyValidationWarning" class="lobby-validation-warning hidden">
+          ⚠️ Очікуємо готовності всіх гравців
+        </div>
 
-        <div style="margin-top: 12px;">
-          <button id="btnGuestCancel" class="btn btn-tool">🏠 В ГОЛОВНЕ МЕНЮ</button>
+        <div class="lobby-room-actions">
+          <button id="btnLobbyToggleReady" class="btn btn-join" style="flex: 1;">
+            🟢 ГОТОВИЙ ДО БОЮ
+          </button>
+          <button id="btnLobbyStartGame" class="btn btn-create" style="flex: 1.5;" disabled>
+            ⚔️ ПОЧАТИ БІЙ
+          </button>
+          <button id="btnLeaveLobby" class="btn btn-tool" style="background: #c0392b;">
+            🚪 ВИЙТИ
+          </button>
         </div>
       </div>
 
@@ -284,21 +288,49 @@
         <div class="test-mode-quickbar">
           <span id="testActivePlayerBadge" class="test-player-badge p1-active">🎮 КЕРУЄТЕ: ГРАВЕЦЬ 1 (ЖОВТИЙ)</span>
           <div class="test-quickbar-actions">
-            <button id="btnTestSwitchPlayer" type="button" class="btn btn-tool test-btn-switch">🔄 ПЕРЕМКНУТИ ГРАВЦЯ (P1 ↔ P2) [Tab]</button>
+            <select id="selectTestTankCount" class="select-field test-tank-count-select" style="max-width: 115px; margin-bottom: 0;" title="Кількість танків на полігоні">
+              <option value="2">👥 2 танки</option>
+              <option value="3">👥 3 танки</option>
+              <option value="4">👥 4 танки</option>
+            </select>
+            <select id="selectTestMapEvent" class="select-field test-event-select" title="Події на карті">
+              <option value="none">☀️ Подія: Без події</option>
+              <option value="darkness">🌑 Подія: Пітьма</option>
+              <option value="acid_rain">🌧️ Подія: Кислотний дощ</option>
+              <option value="artillery_barrage">🎯 Подія: Артилерія</option>
+              <option value="battle_royale">💥 Подія: Батл Рояль</option>
+              <option value="snow_storm">❄️ Подія: Сніг</option>
+              <option value="shuffled_blocks">🎭 Подія: Обман зору</option>
+              <option value="chaos_orbs">🔮 Подія: Аномальні сфери</option>
+              <option value="reverse_vision">🌀 Подія: Реверсивне спостереження</option>
+            </select>
+            <button id="btnTestSwitchPlayer" type="button" class="btn btn-tool test-btn-switch">🔄 ПЕРЕМКНУТИ ТАНК [Tab]</button>
             <button id="btnTestHealBoth" type="button" class="btn btn-tool test-btn-heal">❤️ ВІДНОВИТИ HP / КУЛДАУНИ</button>
             <button id="btnTestResetMap" type="button" class="btn btn-tool">🧱 ВІДНОВИТИ КАРТУ</button>
             <button id="btnTestTogglePerks" type="button" class="btn btn-tool test-btn-perks">✨ ЗДІБНОСТІ ТА СПОРЯДЖЕННЯ ▼</button>
           </div>
         </div>
 
-        <!-- Розкладна панель вибору здібностей та корпусу/дула для Гравця 1 і Гравця 2 -->
+        <!-- Розкладна панель вибору здібностей та корпусу/дула для Гравців 1..4 -->
         <div id="testPerkManagerBox" class="test-perk-manager">
           <div class="test-target-row">
             <div class="test-target-tabs">
-              <button id="btnTestTargetP1" type="button" class="btn btn-tool test-target-btn active-p1">🟡 Налаштувати: ГРАВЕЦЬ 1</button>
-              <button id="btnTestTargetP2" type="button" class="btn btn-tool test-target-btn">🟢 Налаштувати: ГРАВЕЦЬ 2</button>
+              <button id="btnTestTargetP1" type="button" class="btn btn-tool test-target-btn active-p1">🟡 ГРАВЕЦЬ 1</button>
+              <button id="btnTestTargetP2" type="button" class="btn btn-tool test-target-btn">🟢 ГРАВЕЦЬ 2</button>
+              <button id="btnTestTargetP3" type="button" class="btn btn-tool test-target-btn hidden">🔵 ГРАВЕЦЬ 3</button>
+              <button id="btnTestTargetP4" type="button" class="btn btn-tool test-target-btn hidden">🟣 ГРАВЕЦЬ 4</button>
             </div>
             <button id="btnTestClearTargetPerks" type="button" class="btn btn-tool test-btn-clear">🧹 Скинути здібності гравця</button>
+          </div>
+
+          <div class="test-team-row" style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+            <span class="form-label" style="margin: 0; white-space: nowrap;">🛡️ КОМАНДА ТАНКА:</span>
+            <div id="testTargetTeamPills" class="team-pill-group" style="max-width: 240px;">
+              <button type="button" class="team-pill active team-1" data-team="1">🟡 К1</button>
+              <button type="button" class="team-pill team-2" data-team="2">🟢 К2</button>
+              <button type="button" class="team-pill team-3" data-team="3">🔵 К3</button>
+              <button type="button" class="team-pill team-4" data-team="4">🟣 К4</button>
+            </div>
           </div>
 
           <div class="loadout-row test-loadout-row">
@@ -373,6 +405,7 @@
         <!-- Canvas Area (Frame matches canvas exactly) -->
         <div class="canvas-wrapper">
           <canvas id="gameCanvas" width="640" height="640"></canvas>
+          <div id="abilityToastContainer" class="ability-toast-container"></div>
 
           <!-- Local Player HUD Health Bar (Hidden on Tanks, Shown in HUD) -->
           <div class="player-hp-bar-container" id="playerHpContainer">
@@ -385,6 +418,9 @@
                 <span class="hp-mines-badge hidden" id="hudMinesBadge">💣 Міни: 3 / 3</span>
                 <span class="hp-smoke-badge hidden" id="hudSmokeBadge">💨 Дим: ГОТОВО</span>
                 <span class="hp-artillery-badge hidden" id="hudArtilleryBadge">🚀 Арта: ГОТОВО</span>
+                <span class="hp-beacon-badge hidden" id="hudBeaconBadge">🚨 Маяк: ГОТОВО</span>
+                <span class="hp-radar-badge hidden" id="hudRadarBadge">📡 Радар: ГОТОВО</span>
+                <span class="hp-guided-badge hidden" id="hudGuidedBadge">🎯 Куля: ГОТОВО</span>
                 <span class="hp-active-switch-badge hidden" id="hudActiveSwitchHint">🔄 [Q/E]</span>
                 <span class="hp-repair-badge hidden" id="hudRepairBadge">🔧 Рем: 1 / 1 [H]</span>
                 <span class="hp-rebirth-badge hidden" id="hudRebirthBadge">🔥 Життя: +1</span>
@@ -396,6 +432,7 @@
             <div class="hp-bottom-stats-row" id="hudPlayerStatsRow">
               <span class="hp-stat-item" id="hudStatDamage">⚔️ Шкода: 15-20</span>
               <span class="hp-stat-item" id="hudStatFireRate">🔥 Скоростр.: 1.54/с (0.65с)</span>
+              <span class="hp-stat-item" id="hudStatSpread">🎯 Розкид: ±2.5°</span>
               <span class="hp-stat-item" id="hudStatSpeed">⚡ Швидкість: 2</span>
               <span class="hp-stat-item" id="hudStatBulletSpeed">🚀 Шв. снаряду: 6.5</span>
               <span class="hp-stat-item" id="hudStatFov">👁️ Огляд: 90°</span>
@@ -448,8 +485,26 @@
                   <select id="selectRematchWinScore" class="select-field loadout-select"></select>
                 </div>
                 <div class="map-preview-box rematch-map-preview-box">
-                  <canvas id="rematchMapPreviewCanvas" class="map-preview-canvas" width="130" height="130"></canvas>
+                  <canvas id="rematchMapPreviewCanvas" class="map-preview-canvas" width="160" height="160"></canvas>
                   <div class="map-preview-caption">Прев'ю карти</div>
+                </div>
+              </div>
+              <!-- Game Mode Selection Checkboxes (Rematch) -->
+              <div class="game-modes-box rematch-modes-box">
+                <div class="game-modes-label">🎮 ОБЕРІТЬ РЕЖИМ НА РЕВАНШ:</div>
+                <div class="game-modes-grid">
+                  <label class="mode-checkbox-pill">
+                    <input type="checkbox" id="chkRematchModePerks" data-mode-key="perks" checked />
+                    <span>✨ Здібності</span>
+                  </label>
+                  <label class="mode-checkbox-pill">
+                    <input type="checkbox" id="chkRematchModeCurses" data-mode-key="curses" checked />
+                    <span>☠️ Прокляття</span>
+                  </label>
+                  <label class="mode-checkbox-pill">
+                    <input type="checkbox" id="chkRematchModeMapEvents" data-mode-key="mapEvents" />
+                    <span>🌋 Події на карті</span>
+                  </label>
                 </div>
               </div>
               <div class="loadout-row" style="margin-top: 8px;">
