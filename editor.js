@@ -83,6 +83,16 @@ export const MapStorage = {
           updatedStorage = true;
         }
 
+        // Забезпечуємо наявність спавнів P3 та P4 для підтримки мультиплеєра до 4 гравців
+        if (!m.p3Spawn && m.width && m.height) {
+          m.p3Spawn = { x: Math.max(1, m.width - 2), y: 1 };
+          updatedStorage = true;
+        }
+        if (!m.p4Spawn && m.width && m.height) {
+          m.p4Spawn = { x: 1, y: Math.max(1, m.height - 2) };
+          updatedStorage = true;
+        }
+
         // Гарантуємо наявність повних блоків декоративної трави та мілкої води на класичній мапі
         if (m.id === 'default_classic_map' && m.grid) {
           const grassCoords = [
@@ -274,6 +284,8 @@ export const MapStorage = {
       height: size,
       p1Spawn: { x: 1, y: 1 },
       p2Spawn: { x: 14, y: 14 },
+      p3Spawn: { x: 14, y: 1 },
+      p4Spawn: { x: 1, y: 14 },
       grid: grid,
       bushes: bushes,
       ice: ice
@@ -318,6 +330,8 @@ export const MapStorage = {
       height: size,
       p1Spawn: { x: 1, y: 1 },
       p2Spawn: { x: 14, y: 14 },
+      p3Spawn: { x: 14, y: 1 },
+      p4Spawn: { x: 1, y: 14 },
       grid,
       bushes,
       ice
@@ -359,6 +373,8 @@ export const MapStorage = {
       height: size,
       p1Spawn: { x: 1, y: 1 },
       p2Spawn: { x: 14, y: 14 },
+      p3Spawn: { x: 14, y: 1 },
+      p4Spawn: { x: 1, y: 14 },
       grid,
       bushes,
       ice
@@ -369,12 +385,90 @@ export const MapStorage = {
 /**
  * Візуальне сповіщення (Toast)
  */
+let toastTimeoutId = null;
+
 export function showToast(msg) {
+  if (typeof document === 'undefined') return;
   const toast = document.getElementById('toast');
   if (!toast) return;
   toast.textContent = msg;
   toast.classList.add('show');
-  setTimeout(() => toast.classList.remove('show'), 2500);
+  if (toastTimeoutId !== null) {
+    clearTimeout(toastTimeoutId);
+  }
+  toastTimeoutId = setTimeout(() => {
+    toast.classList.remove('show');
+    toastTimeoutId = null;
+  }, 2500);
+}
+
+/**
+ * Перевірка карти на ризик софт-локу під час події «Обман зору» (shuffled_blocks):
+ * Якщо спавн будь-якого гравця оточений блоками арени (кущами, льодом, водою, стінами тощо),
+ * які під час бієкції можуть перетворитися на неруйнівний бетон/сталь і замкнути гравця в глухому куті.
+ * @param {Object} mapData
+ * @returns {boolean} true, якщо виявлено ризик софт-локу
+ */
+export function checkMapPotentialSoftlock(mapData) {
+  if (!mapData || !Array.isArray(mapData.grid) || !mapData.p1Spawn || !mapData.p2Spawn) return false;
+  const cols = Math.max(1, Number(mapData.width) || 16);
+  const rows = Math.max(1, Number(mapData.height) || 16);
+
+  const isPermanentPassage = (c, r) => {
+    if (c < 0 || c >= cols || r < 0 || r >= rows) return false;
+    if (mapData.bushes && mapData.bushes[r] && mapData.bushes[r][c] === 1) return false;
+    const tileId = (mapData.grid[r] && typeof mapData.grid[r][c] === 'number') ? mapData.grid[r][c] : 0;
+    // Тільки порожня клітинка та чисті декорації гарантовано НЕ стануть сталлю/бетоном при «Обмані зору»
+    return tileId === 0 || tileId === 7 || tileId === 11 || tileId === 12 || tileId === 13;
+  };
+
+  const checkSpawn = (spawn) => {
+    if (!spawn || typeof spawn.x !== 'number' || typeof spawn.y !== 'number') return false;
+    const sx = Math.floor(spawn.x);
+    const sy = Math.floor(spawn.y);
+
+    // BFS перевірка кількості гарантовано відкритих клітинок навколо спавну
+    const visited = new Set();
+    const queue = [[sx, sy]];
+    visited.add(`${sx},${sy}`);
+
+    while (queue.length > 0 && visited.size < 4) {
+      const [cx, cy] = queue.shift();
+      const neighbors = [
+        [cx + 1, cy],
+        [cx - 1, cy],
+        [cx, cy + 1],
+        [cx, cy - 1]
+      ];
+      for (const [nx, ny] of neighbors) {
+        const key = `${nx},${ny}`;
+        if (!visited.has(key) && isPermanentPassage(nx, ny)) {
+          visited.add(key);
+          queue.push([nx, ny]);
+        }
+      }
+    }
+
+    // Якщо спавн замкнений у кишені з менш ніж 3 постійних прохідних клітинок — є ризик софт-локу
+    return visited.size < 3;
+  };
+
+  return checkSpawn(mapData.p1Spawn) || checkSpawn(mapData.p2Spawn) || checkSpawn(mapData.p3Spawn) || checkSpawn(mapData.p4Spawn);
+}
+
+/**
+ * Підрахунок кількості дійсних спавнів на карті (від 1 до 4)
+ * @param {Object} mapData 
+ * @returns {number}
+ */
+export function countMapSpawns(mapData) {
+  if (!mapData) return 0;
+  let count = 0;
+  if (mapData.p1Spawn && typeof mapData.p1Spawn.x === 'number') count++;
+  if (mapData.p2Spawn && typeof mapData.p2Spawn.x === 'number') count++;
+  if (mapData.p3Spawn && typeof mapData.p3Spawn.x === 'number') count++;
+  if (mapData.p4Spawn && typeof mapData.p4Spawn.x === 'number') count++;
+  return count;
 }
 
 /**
@@ -430,7 +524,7 @@ export function renderMapPreview(canvasOrId, mapData) {
     }
   }
 
-  // Маркери спавну P1 та P2
+  // Маркери спавнів P1, P2, P3, P4
   const drawSpawnDot = (spawn, color, label) => {
     if (!spawn || typeof spawn.x !== 'number' || typeof spawn.y !== 'number') return;
     const sx = spawn.x * cellW;
@@ -451,6 +545,8 @@ export function renderMapPreview(canvasOrId, mapData) {
 
   drawSpawnDot(mapData.p1Spawn, '#f1c40f', '1');
   drawSpawnDot(mapData.p2Spawn, '#2ecc71', '2');
+  drawSpawnDot(mapData.p3Spawn, '#00d2d3', '3');
+  drawSpawnDot(mapData.p4Spawn, '#e056fd', '4');
   return true;
 }
 
@@ -473,7 +569,8 @@ export function updateAllMapPreviews() {
       renderMapPreview(canvas, mapData);
       const metaEl = metaId ? document.getElementById(metaId) : null;
       if (metaEl) {
-        metaEl.textContent = `${mapData.name} • ${mapData.width}×${mapData.height}`;
+        const spawns = countMapSpawns(mapData);
+        metaEl.textContent = `${mapData.name} • ${mapData.width}×${mapData.height} (Спавнів: ${spawns})`;
       }
     }
   });
@@ -481,9 +578,10 @@ export function updateAllMapPreviews() {
 
 /**
  * Оновлення випадаючого списку збережених карт у лобі Хоста, лобі Гостя та у вікні Реваншу
+ * @param {number} [minSpawns=1] - Фільтр: відображати лише карти з кількістю спавнів >= minSpawns
  */
-export function updateHostMapDropdown() {
-  const maps = MapStorage.getMaps();
+export function updateHostMapDropdown(minSpawns = 1) {
+  const allMaps = MapStorage.getMaps();
   const selectIds = ['selectHostMap', 'selectGuestMap', 'selectRematchMap'];
 
   selectIds.forEach(selectId => {
@@ -492,15 +590,22 @@ export function updateHostMapDropdown() {
     const prevVal = select.value;
     select.innerHTML = '';
 
-    maps.forEach(map => {
+    // Фільтруємо карти за кількістю спавнів (для забезпечення рівної кількості баз усім гравцям)
+    const filtered = allMaps.filter(m => countMapSpawns(m) >= minSpawns);
+    const mapsToRender = filtered.length > 0 ? filtered : allMaps;
+
+    mapsToRender.forEach(map => {
       const opt = document.createElement('option');
       opt.value = map.id;
-      opt.textContent = `${map.name} (${map.width}x${map.height})`;
+      const spawns = countMapSpawns(map);
+      opt.textContent = `${map.name} (${map.width}x${map.height}, 🚩${spawns})`;
       select.appendChild(opt);
     });
 
-    if (prevVal && maps.some(m => m.id === prevVal)) {
+    if (prevVal && mapsToRender.some(m => m.id === prevVal)) {
       select.value = prevVal;
+    } else if (mapsToRender.length > 0) {
+      select.value = mapsToRender[0].id;
     }
   });
 
@@ -555,6 +660,8 @@ export const MapEditor = {
       height: height,
       p1Spawn: { x: 1, y: 1 },
       p2Spawn: { x: width - 2, y: height - 2 },
+      p3Spawn: { x: width - 2, y: 1 },
+      p4Spawn: { x: 1, y: height - 2 },
       grid: grid,
       bushes: bushes,
       ice: ice
@@ -647,6 +754,15 @@ export const MapEditor = {
       if (block.id === 0) {
         badge = 'Інструмент • Очищення';
         categoryClass = 'cat-tool';
+      } else if (block.id === 15 || block.isArmoredGlass) {
+        badge = 'Броньоване скло • Огляд';
+        categoryClass = 'cat-steel';
+      } else if (block.id === 16 || block.isAcid) {
+        badge = 'Токсичність • Кислота';
+        categoryClass = 'cat-water';
+      } else if (block.id === 17 || block.isAcidBarrel) {
+        badge = 'Вибухова бочка • 3 HP';
+        categoryClass = 'cat-wall';
       } else if (block.destructible) {
         badge = `Укріплення • ${block.maxHp || 2} постріли`;
         categoryClass = 'cat-wall';
@@ -757,6 +873,46 @@ export const MapEditor = {
           ctx.textBaseline = 'middle';
           ctx.fillText('P2', size / 2, size / 2);
         }
+      },
+      {
+        tool: 'SPAWN_P3',
+        name: '🚩 Спавн P3 (Ціан)',
+        badge: 'Точка відродження • Гравець 3',
+        categoryClass: 'cat-spawn-p3',
+        description: 'Встановлює стартову базу для Гравця 3. На карті може бути рівно одна точка P3.',
+        drawPreview: (ctx, size) => {
+          TILE_TYPES.EMPTY.draw(ctx, 0, 0, size);
+          ctx.fillStyle = 'rgba(0, 210, 211, 0.35)';
+          ctx.fillRect(2, 2, size - 4, size - 4);
+          ctx.strokeStyle = '#00d2d3';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(2, 2, size - 4, size - 4);
+          ctx.fillStyle = '#00d2d3';
+          ctx.font = 'bold 12px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('P3', size / 2, size / 2);
+        }
+      },
+      {
+        tool: 'SPAWN_P4',
+        name: '🚩 Спавн P4 (Фіолетовий)',
+        badge: 'Точка відродження • Гравець 4',
+        categoryClass: 'cat-spawn-p4',
+        description: 'Встановлює стартову базу для Гравця 4. На карті може бути рівно одна точка P4.',
+        drawPreview: (ctx, size) => {
+          TILE_TYPES.EMPTY.draw(ctx, 0, 0, size);
+          ctx.fillStyle = 'rgba(224, 86, 253, 0.35)';
+          ctx.fillRect(2, 2, size - 4, size - 4);
+          ctx.strokeStyle = '#e056fd';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(2, 2, size - 4, size - 4);
+          ctx.fillStyle = '#e056fd';
+          ctx.font = 'bold 12px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('P4', size / 2, size / 2);
+        }
       }
     );
 
@@ -826,6 +982,8 @@ export const MapEditor = {
   },
 
   setupEventListeners() {
+    if (this._listenersAttached) return;
+    this._listenersAttached = true;
     const getCellCoords = (e) => {
       const rect = this.canvas.getBoundingClientRect();
       const scaleX = this.canvas.width / rect.width;
@@ -871,6 +1029,16 @@ export const MapEditor = {
         if (this.mapData.p1Spawn.x === c && this.mapData.p1Spawn.y === r) {
           this.mapData.p1Spawn = { x: 0, y: 0 };
         }
+      } else if (this.selectedTool === 'SPAWN_P3') {
+        // Рівно один спавн P3 (Ціан)
+        this.mapData.p3Spawn = { x: c, y: r };
+        this.mapData.grid[r][c] = 0;
+        this.mapData.bushes[r][c] = 0;
+      } else if (this.selectedTool === 'SPAWN_P4') {
+        // Рівно один спавн P4 (Фіолетовий)
+        this.mapData.p4Spawn = { x: c, y: r };
+        this.mapData.grid[r][c] = 0;
+        this.mapData.bushes[r][c] = 0;
       } else if (this.selectedTool === 4 || this.selectedTool === 'BUSH') {
         // Встановлюємо високі кущі як шар поверхні над БУДЬ-ЯКИМ наявним блоком (вкл. низькі кущі) або просто на землю!
         this.mapData.bushes[r][c] = 1;
@@ -894,14 +1062,16 @@ export const MapEditor = {
         this.mapData.bushes[r][c] = 0;
         this.mapData.ice[r][c] = 0;
       } else {
-        // Базові блоки та наземний декор
-        if ((this.mapData.p1Spawn.x === c && this.mapData.p1Spawn.y === r) ||
-            (this.mapData.p2Spawn.x === c && this.mapData.p2Spawn.y === r)) {
+        // Базові блоки та наземний декор (не можна затирати клітинки спавнів)
+        if ((this.mapData.p1Spawn && this.mapData.p1Spawn.x === c && this.mapData.p1Spawn.y === r) ||
+            (this.mapData.p2Spawn && this.mapData.p2Spawn.x === c && this.mapData.p2Spawn.y === r) ||
+            (this.mapData.p3Spawn && this.mapData.p3Spawn.x === c && this.mapData.p3Spawn.y === r) ||
+            (this.mapData.p4Spawn && this.mapData.p4Spawn.x === c && this.mapData.p4Spawn.y === r)) {
           return;
         }
         const toolId = parseInt(this.selectedTool, 10);
-        // Якщо ставимо наземний декор (трава/каміння: 7, 11, 12, 13) або воду (3, 8) — вони на одному рівні з льодом, тому замінюють лід
-        if (isGroundDecorTileId(toolId) || toolId === 3 || toolId === 8) {
+        // Якщо ставимо наземний декор (трава/каміння: 7, 11, 12, 13), кислоту (16) або воду (3, 8) — вони на одному рівні з льодом, тому замінюють лід
+        if (isGroundDecorTileId(toolId) || toolId === 3 || toolId === 8 || toolId === 16) {
           this.mapData.ice[r][c] = 0;
         }
         this.mapData.grid[r][c] = toolId;
@@ -984,9 +1154,15 @@ export const MapEditor = {
       return;
     }
 
+    const hasSoftlock = checkMapPotentialSoftlock(this.mapData);
+    this.mapData.possibleSoftlock = hasSoftlock;
     this.mapData.name = name;
     MapStorage.saveMap(this.mapData);
-    showToast(`Карту "${name}" успішно збережено!`);
+    if (hasSoftlock) {
+      showToast(`Карту "${name}" збережено! ⚠️ Увага: можливий софт-лок при «Обмані зору».`);
+    } else {
+      showToast(`Карту "${name}" успішно збережено!`);
+    }
 
     this.renderSavedMapsList();
     updateHostMapDropdown();
@@ -999,11 +1175,16 @@ export const MapEditor = {
     const maps = MapStorage.getMaps();
 
     maps.forEach(map => {
+      const hasSoftlock = Boolean(map.possibleSoftlock || checkMapPotentialSoftlock(map));
+      const softlockBadge = hasSoftlock
+        ? `<span class="editor-softlock-badge" title="При увімкнених подіях («Обман зору») на цій карті можливий софт-лок">⚠️ Можливий софт-лок</span>`
+        : '';
+
       const card = document.createElement('div');
       card.className = 'editor-map-card';
       card.innerHTML = `
         <div class="editor-map-info">
-          <div class="editor-map-name">${map.name}</div>
+          <div class="editor-map-name">${map.name} ${softlockBadge}</div>
           <div class="editor-map-meta">Розмір: ${map.width}x${map.height}</div>
         </div>
         <div class="editor-map-actions">
@@ -1172,6 +1353,38 @@ export const MapEditor = {
       this.ctx.textAlign = 'center';
       this.ctx.textBaseline = 'middle';
       this.ctx.fillText('P2', sx + cellSizeX / 2, sy + cellSizeY / 2);
+    }
+
+    // Відображення спавну P3 (Ціан)
+    if (this.mapData.p3Spawn) {
+      const sx = this.mapData.p3Spawn.x * cellSizeX;
+      const sy = this.mapData.p3Spawn.y * cellSizeY;
+      this.ctx.fillStyle = 'rgba(0, 210, 211, 0.4)';
+      this.ctx.fillRect(sx, sy, cellSizeX, cellSizeY);
+      this.ctx.strokeStyle = '#00d2d3';
+      this.ctx.lineWidth = 2;
+      this.ctx.strokeRect(sx + 2, sy + 2, cellSizeX - 4, cellSizeY - 4);
+      this.ctx.fillStyle = '#00d2d3';
+      this.ctx.font = `${Math.floor(cellSize * 0.45)}px 'Press Start 2P', monospace`;
+      this.ctx.textAlign = 'center';
+      this.ctx.textBaseline = 'middle';
+      this.ctx.fillText('P3', sx + cellSizeX / 2, sy + cellSizeY / 2);
+    }
+
+    // Відображення спавну P4 (Фіолетовий)
+    if (this.mapData.p4Spawn) {
+      const sx = this.mapData.p4Spawn.x * cellSizeX;
+      const sy = this.mapData.p4Spawn.y * cellSizeY;
+      this.ctx.fillStyle = 'rgba(224, 86, 253, 0.4)';
+      this.ctx.fillRect(sx, sy, cellSizeX, cellSizeY);
+      this.ctx.strokeStyle = '#e056fd';
+      this.ctx.lineWidth = 2;
+      this.ctx.strokeRect(sx + 2, sy + 2, cellSizeX - 4, cellSizeY - 4);
+      this.ctx.fillStyle = '#e056fd';
+      this.ctx.font = `${Math.floor(cellSize * 0.45)}px 'Press Start 2P', monospace`;
+      this.ctx.textAlign = 'center';
+      this.ctx.textBaseline = 'middle';
+      this.ctx.fillText('P4', sx + cellSizeX / 2, sy + cellSizeY / 2);
     }
   }
 };
