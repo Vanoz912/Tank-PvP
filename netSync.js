@@ -9,29 +9,30 @@
  *   onEventReceived, onRematchReceived, onStatusChange, onPingUpdate, onError)
  */
 
-import { Bullet, Mine, Explosion, SmokeCloud } from './entities.js?v=20261011_v17';
-import { PERK_TYPES } from './config.js?v=20261011_v17';
-import { MapStorage, updateHostMapDropdown, updateAllMapPreviews, showToast } from './editor.js?v=20261011_v17';
+import { Bullet, Mine, Explosion, SmokeCloud, FlyingOrb } from './entities.js?v=20261011_v17';
+import { PERK_TYPES, CURSE_TYPES } from './config.js?v=20261011_v17';
+import { MapStorage, updateHostMapDropdown, renderMapPreview, updateAllMapPreviews, showToast, countMapSpawns } from './editor.js?v=20261011_v17';
 import Network from './network.js?v=20261011_v17';
 import { sound } from './audio.js?v=20261011_v17';
 import {
   setLastTankPos, triggerScreenShake, isTankOnEnemySlowingTrack,
-  spawnDebris, spawnMuzzleFlash, spawnSmoke,
+  spawnDebris, spawnMuzzleFlash, spawnSmoke, spawnTracerTrail,
   updateParticles as updateParticlesVfx,
   updateExplosions as updateExplosionsVfx
 } from './vfx.js?v=20261011_v17';
 import {
   currentActiveMap, gridCols, gridRows, tileSize, canvasWidth, canvasHeight, tankSize,
-  MAX_SCORE, setTargetWinScore,
-  roundResetTimer, lastRoundLoserId, p1Tank, p2Tank,
-  localLoadout, p1Loadout, p2Loadout, currentFps,
+  MAX_SCORE, setTargetWinScore, selectedGameModes, setGameModes,
+  roundResetTimer, lastRoundLoserId, p1Tank, p2Tank, p3Tank, p4Tank,
+  localLoadout, p1Loadout, p2Loadout, p3Loadout, p4Loadout, currentFps,
+  playerSlots, setPlayerSlots, teamSettings, setTeamSettings, teamScores, setTeamScore,
   gameState, renderTanks,
-  localInput, p1Input, p2Input,
+  localInput, p1Input, p2Input, p3Input, p4Input,
   decrementRoundResetTimer,
-  setCurrentActiveMap, setP1Loadout, setP2Loadout,
-  setP2Input, setArenaDims,
+  setCurrentActiveMap, setP1Loadout, setP2Loadout, setP3Loadout, setP4Loadout,
+  setP2Input, setP3Input, setP4Input, setArenaDims,
   setupGameMap, restoreMapState,
-  resetRoundSpawns, resetForRematch
+  resetRoundSpawns, resetForRematch, uiHooks
 } from './state.js?v=20261011_v17';
 import { updatePlayersVisibilityState } from './vision.js?v=20261011_v17';
 import {
@@ -39,19 +40,71 @@ import {
 } from './perks.js?v=20261011_v17';
 import {
   checkMapCollision, checkTankCollision, spawnBullet,
-  useSmokeForTank, useArtilleryForTank, surrenderMatch,
-  triggerActiveAbilityForTank,
+  useSmokeForTank, useArtilleryForTank,
+  useBeaconForTank, useSpotEnemyForTank, triggerGuidedBulletForTank, useTurboForTank,
+  surrenderMatch, triggerActiveAbilityForTank, processTankActionInputs,
   startManualReloadForTank, useRepairKitForTank,
   updateBulletsAndCollisions, updateMinesAndCollisions, updateTankPassives
 } from './combat.js?v=20261011_v17';
 import {
   renderRematchUI, updateTelemetryUI, updateHUD,
-  setConnectionStatus, startActiveMatch
+  setConnectionStatus, startActiveMatch, renderLobbySlots, updateLobbyStartValidation
 } from './ui.js?v=20261011_v17';
 
 /**
  * Авторитетний такт Хоста та Полігону (Authoritative Server / Test Mode Cycle)
  */
+function serializeTankState(tank) {
+  if (!tank) return null;
+  return {
+    id: tank.id,
+    team: tank.team || tank.id,
+    x: tank.x, y: tank.y, size: tank.size,
+    bodyAngle: tank.bodyAngle, turretAngle: tank.turretAngle,
+    hp: tank.hp, maxHp: tank.maxHp, armor: tank.armor,
+    minDmg: tank.minDmg, maxDmg: tank.maxDmg,
+    reloadTime: tank.reloadTime, fireRate: tank.fireRate,
+    spreadHalfAngleDeg: tank.spreadHalfAngleDeg,
+    roundTimeDmgBonus: tank.roundTimeDmgBonus || 0,
+    hitInvulnTimer: tank.hitInvulnTimer || 0,
+    hull: tank.hullType, turret: tank.turretType, fov: tank.fov,
+    ammo: tank.ammo, clipSize: tank.clipSize,
+    isReloadingClip: tank.isReloadingClip,
+    reloadProgress: typeof tank.getReloadProgress === 'function' ? tank.getReloadProgress() : 0,
+    minesLeft: tank.minesLeft, maxMines: tank.maxMines,
+    hasSmokeScreen: tank.hasSmokeScreen,
+    smokeCooldownTimer: tank.smokeCooldownTimer || 0,
+    smokeActiveTimer: tank.smokeActiveTimer || 0,
+    hasArtillery: tank.hasArtillery,
+    artilleryCooldownTimer: tank.artilleryCooldownTimer || 0,
+    artilleryPendingTimer: tank.artilleryPendingTimer || 0,
+    hasBeaconHeal: tank.hasBeaconHeal,
+    beaconStacks: tank.beaconStacks || 0,
+    beaconCooldownTimer: tank.beaconCooldownTimer || 0,
+    beaconActiveTimer: tank.beaconActiveTimer || 0,
+    hasSpotEnemy: tank.hasSpotEnemy,
+    spotCooldownTimer: tank.spotCooldownTimer || 0,
+    spotActiveTimer: tank.spotActiveTimer || 0,
+    hasGuidedBullet: tank.hasGuidedBullet,
+    guidedCooldownTimer: tank.guidedCooldownTimer || 0,
+    guidedBulletArmed: Boolean(tank.guidedBulletArmed),
+    guidedBulletActive: Boolean(tank.guidedBulletActive),
+    hasTurboBoost: tank.hasTurboBoost,
+    turboCooldownTimer: tank.turboCooldownTimer || 0,
+    turboActiveTimer: tank.turboActiveTimer || 0,
+    sniperStealthTimer: tank.sniperStealthTimer || 0,
+    blindTimer: tank.blindTimer || 0,
+    selectedActive: tank.selectedActive,
+    repairKitsLeft: tank.repairKitsLeft, maxRepairKits: tank.maxRepairKits,
+    rebirthsLeft: tank.rebirthsLeft, maxRebirths: tank.maxRebirths,
+    rerollsLeft: tank.rerollsLeft, maxRerolls: tank.maxRerolls,
+    acquiredPerks: tank.acquiredPerks || [],
+    acquiredCurses: tank.acquiredCurses || [],
+    isDead: tank.isDead, respawnTimer: tank.respawnTimer,
+    spawnShieldTimer: tank.spawnShieldTimer, animFrame: tank.animFrame
+  };
+}
+
 export function hostUpdate() {
   const isTest = Boolean(gameState && gameState.isTestMode);
   if ((!Network.isHost || !Network.connectionActive) && !isTest) return;
@@ -61,7 +114,7 @@ export function hostUpdate() {
     if (roundResetTimer === 0 && !gameState.gameOver) {
       const loserToPick = lastRoundLoserId;
       resetRoundSpawns();
-      if (loserToPick === 1 || loserToPick === 2) {
+      if (loserToPick >= 1 && loserToPick <= 4) {
         startPerkSelection(loserToPick);
       }
     }
@@ -69,98 +122,43 @@ export function hostUpdate() {
 
   const isSelectingPerk = Boolean(gameState.perkSelection && gameState.perkSelection.active);
 
+  const activeTanks = (gameState && Array.isArray(gameState.tanks) && gameState.tanks.length > 0)
+    ? gameState.tanks
+    : [p1Tank, p2Tank, p3Tank, p4Tank].filter(Boolean);
+  const allInputs = [p1Input, p2Input, p3Input, p4Input];
+
   if (!gameState.gameOver && !isSelectingPerk) {
-    // Синхронізація обраної активної здібності (Q / E) від вводу гравців
-    if (p1Input && typeof p1Input.selectedActive === 'string' && p1Tank) {
-      p1Tank.selectedActive = p1Input.selectedActive;
-      p1Tank.localSelectedActive = p1Input.selectedActive;
-    }
-    if (p2Input && typeof p2Input.selectedActive === 'string' && p2Tank) {
-      p2Tank.selectedActive = p2Input.selectedActive;
-      p2Tank.localSelectedActive = p2Input.selectedActive;
-    }
+    // 0. Синхронізація обраної активної здібності (Q / E) від вводу гравців
+    activeTanks.forEach(tank => {
+      const inp = allInputs[tank.id - 1];
+      if (inp && typeof inp.selectedActive === 'string') {
+        tank.selectedActive = inp.selectedActive;
+        tank.localSelectedActive = inp.selectedActive;
+      }
+    });
 
     // 1. Оновлення фізики та кутів танків (з урахуванням льоду та сповільнюючих слідів ворога)
     if (roundResetTimer <= 0) {
-      p1Tank.slowedByEnemyTrack = isTankOnEnemySlowingTrack(p1Tank);
-      p2Tank.slowedByEnemyTrack = isTankOnEnemySlowingTrack(p2Tank);
-      p1Tank.update(p1Input, p2Tank, gameState.map, canvasWidth, canvasHeight, tileSize, checkMapCollision, checkTankCollision, {
-        iceGrid: gameState.ice,
-        enemyTrackSlow: p1Tank.slowedByEnemyTrack
-      });
-      p2Tank.update(p2Input, p1Tank, gameState.map, canvasWidth, canvasHeight, tileSize, checkMapCollision, checkTankCollision, {
-        iceGrid: gameState.ice,
-        enemyTrackSlow: p2Tank.slowedByEnemyTrack
+      activeTanks.forEach(tank => {
+        tank.slowedByEnemyTrack = isTankOnEnemySlowingTrack(tank);
+        const otherTanks = activeTanks.filter(t => t !== tank);
+        tank.update(allInputs[tank.id - 1] || {}, otherTanks, gameState.map, canvasWidth, canvasHeight, tileSize, checkMapCollision, checkTankCollision, {
+          iceGrid: gameState.ice,
+          enemyTrackSlow: tank.slowedByEnemyTrack,
+          gameState
+        });
       });
     } else {
-      if (p1Tank.spawnShieldTimer > 0) p1Tank.spawnShieldTimer--;
-      if (p2Tank.spawnShieldTimer > 0) p2Tank.spawnShieldTimer--;
+      activeTanks.forEach(tank => {
+        if (tank.spawnShieldTimer > 0) tank.spawnShieldTimer--;
+      });
     }
 
-    // 2. Обробка стрільби, ручної перезарядки (R), активних здібностей (Міни / Дим / Артилерія) та ремкомплекту (H)
+    // 2. Обробка стрільби, ручної перезарядки (R), активних здібностей та ремкомплекту (H)
     if (roundResetTimer <= 0) {
-      if (p1Input.reloadClip) {
-        startManualReloadForTank(p1Tank);
-        p1Input.reloadClip = false;
-        if (Network.myPlayerId === 1) localInput.reloadClip = false;
-      }
-      if (p2Input.reloadClip) {
-        startManualReloadForTank(p2Tank);
-        p2Input.reloadClip = false;
-        if (Network.myPlayerId === 2) localInput.reloadClip = false;
-      }
-
-      if (p1Input.useRepair && p1Tank.canUseRepairKit()) {
-        useRepairKitForTank(p1Tank);
-        p1Input.useRepair = false;
-        if (Network.myPlayerId === 1) localInput.useRepair = false;
-      }
-      if (p2Input.useRepair && p2Tank.canUseRepairKit()) {
-        useRepairKitForTank(p2Tank);
-        p2Input.useRepair = false;
-        if (Network.myPlayerId === 2) localInput.useRepair = false;
-      }
-
-      if (p1Input.useSmoke && p1Tank.canUseSmoke()) {
-        useSmokeForTank(p1Tank);
-        p1Input.useSmoke = false;
-        if (Network.myPlayerId === 1) localInput.useSmoke = false;
-      }
-      if (p2Input.useSmoke && p2Tank.canUseSmoke()) {
-        useSmokeForTank(p2Tank);
-        p2Input.useSmoke = false;
-        if (Network.myPlayerId === 2) localInput.useSmoke = false;
-      }
-
-      if (p1Input.artilleryStrike && p1Tank.canUseArtillery()) {
-        useArtilleryForTank(p1Tank, p1Input.artilleryStrike.col, p1Input.artilleryStrike.row);
-        p1Input.artilleryStrike = null;
-        if (Network.myPlayerId === 1) localInput.artilleryStrike = null;
-      }
-      if (p2Input.artilleryStrike && p2Tank.canUseArtillery()) {
-        useArtilleryForTank(p2Tank, p2Input.artilleryStrike.col, p2Input.artilleryStrike.row);
-        p2Input.artilleryStrike = null;
-        if (Network.myPlayerId === 2) localInput.artilleryStrike = null;
-      }
-
-      if (p1Input.placeMine) {
-        triggerActiveAbilityForTank(p1Tank);
-        p1Input.placeMine = false;
-        if (Network.myPlayerId === 1) localInput.placeMine = false;
-      }
-      if (p2Input.placeMine) {
-        triggerActiveAbilityForTank(p2Tank);
-        p2Input.placeMine = false;
-        if (Network.myPlayerId === 2) localInput.placeMine = false;
-      }
-
-      if (p1Input.shoot && p1Tank.canShoot()) {
-        spawnBullet(p1Tank);
-      }
-
-      if (p2Input.shoot && p2Tank.canShoot()) {
-        spawnBullet(p2Tank);
-      }
+      activeTanks.forEach(tank => {
+        processTankActionInputs(tank, allInputs[tank.id - 1] || {}, Network.myPlayerId === tank.id);
+      });
     }
 
     // 3. Снаряди, міни та пасивні здібності
@@ -170,87 +168,66 @@ export function hostUpdate() {
       updateTankPassives();
     }
 
-    // 4. Стелс: пряма видимість (LoS), конус погляду вежі, маскування в кущах і воді, низькі кущі, дим 3x3, ВХ та затримка погляду 1с
+    // 4. Стелс: пряма видимість (LoS), конус погляду вежі, маскування, тактичний огляд союзників
     updatePlayersVisibilityState();
   }
 
   updateExplosionsVfx(gameState);
   updateParticlesVfx(p1Tank, p2Tank, gameState);
 
-  // Трансляція авторитетного стану клієнту (якщо активне P2P з'єднання)
+  // Трансляція авторитетного стану клієнтам зіркової топології
   if (Network.isHost && Network.connectionActive) {
     Network.sendState({
+      isMatchStarted: Boolean(gameState && gameState.isRunning),
       mapName: gameState.mapName,
-      width: gameState.width,
-      height: gameState.height,
+      width: gridCols,
+      height: gridRows,
       tileSize: tileSize,
       tankSize: tankSize,
       roundTimeFrames: gameState.roundTimeFrames || 0,
       surrenderedBy: gameState.surrenderedBy || 0,
+      gameModes: gameState.gameModes || selectedGameModes,
       map: gameState.map,
       bushes: gameState.bushes,
       ice: gameState.ice,
       tileHp: gameState.tileHp,
-      visibility: gameState.visibility,
+      visibility: {
+        p1CanSeeP2: Boolean(gameState.visibility ? gameState.visibility.p1CanSeeP2 : true),
+        p2CanSeeP1: Boolean(gameState.visibility ? gameState.visibility.p2CanSeeP1 : true),
+        matrix: (gameState.visibility && gameState.visibility.matrix) ? gameState.visibility.matrix : null
+      },
+      currentMapEvent: gameState.currentMapEvent,
+      mapEventBannerTimer: gameState.mapEventBannerTimer || 0,
+      battleRoyaleZone: gameState.battleRoyaleZone,
+      envArtilleryStrikes: gameState.envArtilleryStrikes || [],
       perkSelection: gameState.perkSelection,
-      p1: {
-        x: p1Tank.x, y: p1Tank.y,
-        bodyAngle: p1Tank.bodyAngle, turretAngle: p1Tank.turretAngle,
-        hp: p1Tank.hp, maxHp: p1Tank.maxHp, armor: p1Tank.armor,
-        minDmg: p1Tank.minDmg, maxDmg: p1Tank.maxDmg,
-        reloadTime: p1Tank.reloadTime, fireRate: p1Tank.fireRate,
-        roundTimeDmgBonus: p1Tank.roundTimeDmgBonus || 0,
-        hitInvulnTimer: p1Tank.hitInvulnTimer || 0,
-        hull: p1Tank.hullType, turret: p1Tank.turretType, fov: p1Tank.fov,
-        ammo: p1Tank.ammo, clipSize: p1Tank.clipSize,
-        isReloadingClip: p1Tank.isReloadingClip,
-        reloadProgress: p1Tank.getReloadProgress(),
-        minesLeft: p1Tank.minesLeft, maxMines: p1Tank.maxMines,
-        hasSmokeScreen: p1Tank.hasSmokeScreen,
-        smokeCooldownTimer: p1Tank.smokeCooldownTimer || 0,
-        hasArtillery: p1Tank.hasArtillery,
-        artilleryCooldownTimer: p1Tank.artilleryCooldownTimer || 0,
-        selectedActive: p1Tank.selectedActive,
-        repairKitsLeft: p1Tank.repairKitsLeft, maxRepairKits: p1Tank.maxRepairKits,
-        rebirthsLeft: p1Tank.rebirthsLeft, maxRebirths: p1Tank.maxRebirths,
-        rerollsLeft: p1Tank.rerollsLeft, maxRerolls: p1Tank.maxRerolls,
-        acquiredPerks: p1Tank.acquiredPerks,
-        isDead: p1Tank.isDead, respawnTimer: p1Tank.respawnTimer,
-        spawnShieldTimer: p1Tank.spawnShieldTimer, animFrame: p1Tank.animFrame
-      },
-      p2: {
-        x: p2Tank.x, y: p2Tank.y,
-        bodyAngle: p2Tank.bodyAngle, turretAngle: p2Tank.turretAngle,
-        hp: p2Tank.hp, maxHp: p2Tank.maxHp, armor: p2Tank.armor,
-        minDmg: p2Tank.minDmg, maxDmg: p2Tank.maxDmg,
-        reloadTime: p2Tank.reloadTime, fireRate: p2Tank.fireRate,
-        roundTimeDmgBonus: p2Tank.roundTimeDmgBonus || 0,
-        hitInvulnTimer: p2Tank.hitInvulnTimer || 0,
-        hull: p2Tank.hullType, turret: p2Tank.turretType, fov: p2Tank.fov,
-        ammo: p2Tank.ammo, clipSize: p2Tank.clipSize,
-        isReloadingClip: p2Tank.isReloadingClip,
-        reloadProgress: p2Tank.getReloadProgress(),
-        minesLeft: p2Tank.minesLeft, maxMines: p2Tank.maxMines,
-        hasSmokeScreen: p2Tank.hasSmokeScreen,
-        smokeCooldownTimer: p2Tank.smokeCooldownTimer || 0,
-        hasArtillery: p2Tank.hasArtillery,
-        artilleryCooldownTimer: p2Tank.artilleryCooldownTimer || 0,
-        selectedActive: p2Tank.selectedActive,
-        repairKitsLeft: p2Tank.repairKitsLeft, maxRepairKits: p2Tank.maxRepairKits,
-        rebirthsLeft: p2Tank.rebirthsLeft, maxRebirths: p2Tank.maxRebirths,
-        rerollsLeft: p2Tank.rerollsLeft, maxRerolls: p2Tank.maxRerolls,
-        acquiredPerks: p2Tank.acquiredPerks,
-        isDead: p2Tank.isDead, respawnTimer: p2Tank.respawnTimer,
-        spawnShieldTimer: p2Tank.spawnShieldTimer, animFrame: p2Tank.animFrame
-      },
+      pendingArtilleryStrikes: gameState.pendingArtilleryStrikes || [],
+      tilePropertyMap: gameState.tilePropertyMap,
+      flyingOrbs: (gameState.flyingOrbs || []).map(o => ({
+        x: o.x, y: o.y, vx: o.vx, vy: o.vy,
+        angle: typeof o.rotationAngle === 'number' ? o.rotationAngle : (o.angle || 0),
+        rotationAngle: typeof o.rotationAngle === 'number' ? o.rotationAngle : (o.angle || 0),
+        radius: o.radius
+      })),
+      p1: serializeTankState(p1Tank),
+      p2: serializeTankState(p2Tank),
+      p3: serializeTankState(p3Tank),
+      p4: serializeTankState(p4Tank),
+      playerSlots: playerSlots,
+      teamScores: teamScores,
+      teamSettings: teamSettings,
       bullets: gameState.bullets.map(b => ({
-        ownerId: b.ownerId, x: b.x, y: b.y, vx: b.vx, vy: b.vy, damage: b.damage, angle: b.angle,
+        ownerId: b.ownerId, team: b.team || b.ownerId, x: b.x, y: b.y, vx: b.vx, vy: b.vy, damage: b.damage, angle: b.angle,
         pierceLeft: b.pierceLeft || 0, ricochetsLeft: b.ricochetsLeft || 0,
         ignoreArmor: Boolean(b.ignoreArmor), instantBreak: Boolean(b.instantBreak),
-        invisibleToEnemy: Boolean(b.invisibleToEnemy)
+        invisibleToEnemy: Boolean(b.invisibleToEnemy),
+        isGuided: Boolean(b.isGuided), isTracer: Boolean(b.isTracer), speed: b.speed,
+        blindsOnHit: Boolean(b.blindsOnHit),
+        healsOnHit: Boolean(b.healsOnHit),
+        isMagnetic: Boolean(b.isMagnetic)
       })),
       mines: (gameState.mines || []).map(m => ({
-        ownerId: m.ownerId, x: m.x, y: m.y
+        ownerId: m.ownerId, team: m.team || m.ownerId, x: m.x, y: m.y
       })),
       smokeClouds: (gameState.smokeClouds || []).map(sc => ({
         ownerId: sc.ownerId, centerCol: sc.centerCol, centerRow: sc.centerRow,
@@ -277,7 +254,7 @@ export function hostUpdate() {
  */
 export function initNetworkCallbacks() {
   Network.init({
-    onConnected: ({ isHost, myPlayerId }) => {
+    onConnected: ({ isHost, myPlayerId, slotId, lobbyPreview }) => {
       const isP1 = myPlayerId === 1;
       const selectH = document.getElementById(isP1 ? 'selectHull' : 'selectGuestHull');
       const selectT = document.getElementById(isP1 ? 'selectTurret' : 'selectGuestTurret');
@@ -292,17 +269,133 @@ export function initNetworkCallbacks() {
         console.warn('Не вдалося надіслати каталог карт:', e);
       }
 
-      if (isHost && currentActiveMap) {
-        Network.sendMap(currentActiveMap);
-        Network.sendLoadout(localLoadout);
-      } else {
-        const gMap = gameState && gameState.guestSelectedMap;
-        if (gMap && gMap.id && gMap.id !== 'default_classic_map' && gMap.id !== 'default') {
-          Network.sendMap(gMap);
+      if (isHost) {
+        if (currentActiveMap) {
+          Network.sendMap(currentActiveMap);
         }
         Network.sendLoadout(localLoadout);
+        Network.sendRematch({
+          action: 'lobbySettingsSync',
+          targetScore: MAX_SCORE,
+          gameModes: { ...selectedGameModes },
+          map: currentActiveMap
+        });
+      } else {
+        Network.sendLoadout(localLoadout);
       }
+
+      if (isHost || lobbyPreview) {
+        if (isHost) {
+          uiHooks.renderLobbySlots();
+          uiHooks.updateLobbyStartValidation();
+        } else {
+          updateHostMapDropdown();
+          updateAllMapPreviews();
+          uiHooks.renderLobbySlots();
+          uiHooks.updateLobbyStartValidation();
+        }
+        return;
+      }
+
       startActiveMatch(isHost, myPlayerId);
+    },
+    onGuestJoined: (slotId) => {
+      if (Network.isHost && playerSlots[slotId - 1]) {
+        playerSlots[slotId - 1].type = 'human';
+        playerSlots[slotId - 1].isReady = false;
+        playerSlots[slotId - 1].name = `Гравець ${slotId}`;
+        const activeCount = playerSlots.filter(s => s.type !== 'none').length;
+        updateHostMapDropdown(activeCount);
+        Network.sendLobbyUpdate({
+          playerSlots,
+          teamSettings,
+          map: currentActiveMap,
+          targetScore: MAX_SCORE,
+          gameModes: selectedGameModes
+        });
+        uiHooks.renderLobbySlots();
+        uiHooks.updateLobbyStartValidation();
+        showToast(`🟢 Гравець ${slotId} приєднався до кімнати!`);
+      }
+    },
+    onGuestLeft: (slotId) => {
+      if (Network.isHost && playerSlots[slotId - 1]) {
+        playerSlots[slotId - 1].type = 'none';
+        playerSlots[slotId - 1].isReady = false;
+        const activeCount = playerSlots.filter(s => s.type !== 'none').length;
+        updateHostMapDropdown(activeCount);
+        Network.sendLobbyUpdate({
+          playerSlots,
+          teamSettings,
+          map: currentActiveMap,
+          targetScore: MAX_SCORE,
+          gameModes: selectedGameModes
+        });
+        uiHooks.renderLobbySlots();
+        uiHooks.updateLobbyStartValidation();
+        showToast(`⚠️ Гравець ${slotId} покинув кімнату.`);
+      }
+    },
+    onSlotAssign: (mySlotId) => {
+      Network.myPlayerId = mySlotId;
+      const guestView = document.getElementById('lobbyGuestView');
+      const roomView = document.getElementById('lobbyRoomView');
+      if (guestView) guestView.classList.add('hidden');
+      if (roomView) roomView.classList.remove('hidden');
+      uiHooks.renderLobbySlots();
+      uiHooks.updateLobbyStartValidation();
+      showToast(`🎮 Вам призначено Слот ${mySlotId}!`);
+    },
+    onSlotUpdate: (slotData, fromSlot) => {
+      if (Network.isHost && playerSlots[fromSlot - 1]) {
+        const slot = playerSlots[fromSlot - 1];
+        if (typeof slotData.team === 'number') slot.team = slotData.team;
+        if (typeof slotData.isReady === 'boolean') slot.isReady = slotData.isReady;
+        if (slotData.loadout && typeof slotData.loadout === 'object') {
+          slot.loadout = { ...slotData.loadout };
+          const allTanks = [p1Tank, p2Tank, p3Tank, p4Tank];
+          const t = allTanks[fromSlot - 1];
+          if (t) t.applyLoadout(slot.loadout.hull, slot.loadout.turret);
+        }
+        Network.sendLobbyUpdate({
+          playerSlots,
+          teamSettings,
+          map: currentActiveMap,
+          targetScore: MAX_SCORE,
+          gameModes: selectedGameModes
+        });
+        uiHooks.renderLobbySlots();
+        uiHooks.updateLobbyStartValidation();
+      }
+    },
+    onLobbyUpdate: (lobbyState) => {
+      if (!Network.isHost && lobbyState) {
+        if (gameState && gameState.isRunning) {
+          return;
+        }
+        if (Array.isArray(lobbyState.playerSlots)) {
+          setPlayerSlots(lobbyState.playerSlots);
+        }
+        if (lobbyState.teamSettings) {
+          setTeamSettings(lobbyState.teamSettings);
+        }
+        if (lobbyState.targetScore && lobbyState.targetScore !== MAX_SCORE) {
+          setTargetWinScore(lobbyState.targetScore);
+        }
+        if (lobbyState.gameModes) {
+          setGameModes(lobbyState.gameModes);
+        }
+        if (lobbyState.map && lobbyState.map.grid) {
+          setCurrentActiveMap(lobbyState.map);
+          renderMapPreview('hostMapPreviewCanvas', lobbyState.map);
+        }
+        const guestView = document.getElementById('lobbyGuestView');
+        const roomView = document.getElementById('lobbyRoomView');
+        if (guestView) guestView.classList.add('hidden');
+        if (roomView) roomView.classList.remove('hidden');
+        uiHooks.renderLobbySlots();
+        uiHooks.updateLobbyStartValidation();
+      }
     },
     onDisconnected: () => {
       showToast('⚠️ З\'єднання втрачено: суперник покинув гру.');
@@ -319,40 +412,76 @@ export function initNetworkCallbacks() {
         MapStorage.mergeRemoteMaps([receivedMap]);
         setupGameMap(receivedMap);
         updateHostMapDropdown();
+        const guestMap = document.getElementById('selectGuestMap');
+        if (guestMap && receivedMap.id) guestMap.value = receivedMap.id;
         const remMap = document.getElementById('selectRematchMap');
         if (remMap && receivedMap.id) remMap.value = receivedMap.id;
         updateAllMapPreviews();
         if (Network.isHost) {
-          showToast(`🗺️ Гравець 2 обрав карту «${receivedMap.name || 'Нова мапа'}»!`);
+          showToast(`🗺️ Обрано карту «${receivedMap.name || 'Нова мапа'}»!`);
         }
       }
     },
-    onLoadoutReceived: (loadout) => {
-      if (Network.isHost) {
-        setP2Loadout({ ...loadout });
-        if (p2Tank) {
-          const wasAtFullHp = p2Tank.hp >= p2Tank.maxHp;
-          p2Tank.applyLoadout(p2Loadout.hull, p2Loadout.turret);
-          if (wasAtFullHp || (gameState.score1 === 0 && gameState.score2 === 0 && p2Tank.spawnShieldTimer > 0)) {
-            p2Tank.hp = p2Tank.maxHp;
-          }
-        }
-        Network.sendLoadout(localLoadout);
-      } else {
-        setP1Loadout({ ...loadout });
-        if (p1Tank) {
-          const wasAtFullHp = p1Tank.hp >= p1Tank.maxHp;
-          p1Tank.applyLoadout(p1Loadout.hull, p1Loadout.turret);
-          if (wasAtFullHp) p1Tank.hp = p1Tank.maxHp;
-        }
+    onLoadoutReceived: (loadout, fromSlot = 2) => {
+      const slotId = fromSlot || 2;
+      if (playerSlots[slotId - 1]) {
+        playerSlots[slotId - 1].loadout = { ...loadout };
       }
+      const allTanks = [p1Tank, p2Tank, p3Tank, p4Tank];
+      const targetTank = allTanks[slotId - 1];
+      if (targetTank) {
+        targetTank.applyLoadout(loadout.hull, loadout.turret);
+      }
+      uiHooks.renderLobbySlots();
       updateHUD();
     },
     onStateReceived: (newState) => {
       if (!newState) return;
+      try {
+        if (newState.isMatchStarted) {
+        Network.isGuestInLobbySetup = false;
+        if (Array.isArray(newState.playerSlots)) {
+          setPlayerSlots(newState.playerSlots);
+        }
+        if (newState.teamSettings) {
+          setTeamSettings(newState.teamSettings);
+        }
+        const lobbyScreen = document.getElementById('lobbyScreen');
+        const roomView = document.getElementById('lobbyRoomView');
+        const guestView = document.getElementById('lobbyGuestView');
+        const browserView = document.getElementById('lobbyBrowserView');
+        const isLobbyVisible = (lobbyScreen && !lobbyScreen.classList.contains('hidden')) ||
+                               (roomView && !roomView.classList.contains('hidden')) ||
+                               (guestView && !guestView.classList.contains('hidden')) ||
+                               (browserView && !browserView.classList.contains('hidden'));
+
+        if (!gameState || !gameState.isRunning || isLobbyVisible) {
+          if (newState.map && Array.isArray(newState.map)) {
+            setupGameMap({
+              id: 'synced_host_map',
+              name: newState.mapName || 'Класична',
+              width: newState.width || 16,
+              height: newState.height || 16,
+              p1Spawn: { x: 1, y: 1 },
+              p2Spawn: { x: Math.max(1, (newState.width || 16) - 2), y: Math.max(1, (newState.height || 16) - 2) },
+              grid: newState.map || [],
+              bushes: newState.bushes || [],
+              ice: newState.ice || []
+            }, playerSlots);
+          } else {
+            setupGameMap(currentActiveMap, playerSlots);
+          }
+          startActiveMatch(false, Network.myPlayerId);
+        }
+      }
+      if (Network.isGuestInLobbySetup) return;
 
       if (newState.targetScore && newState.targetScore !== MAX_SCORE) {
         setTargetWinScore(newState.targetScore);
+      }
+
+      if (newState.gameModes && typeof newState.gameModes === 'object') {
+        setGameModes(newState.gameModes);
       }
 
       // Якщо клієнт ще не ініціалізував мапу або розмір сітки/тайла відрізняється від Хоста — синхронізуємо геометрію 1:1
@@ -367,7 +496,10 @@ export function initNetworkCallbacks() {
           grid: newState.map || [],
           bushes: newState.bushes || [],
           ice: newState.ice || []
-        });
+        }, playerSlots);
+        if (newState.isMatchStarted && gameState) {
+          gameState.isRunning = true;
+        }
       }
 
       if (newState.tileSize && newState.tileSize !== tileSize) {
@@ -377,8 +509,11 @@ export function initNetworkCallbacks() {
           canvasHeight: gridRows * newState.tileSize,
           tankSize: newState.tankSize || Math.max(18, Math.floor(newState.tileSize * 0.82))
         });
-        if (p1Tank) p1Tank.size = tankSize;
-        if (p2Tank) p2Tank.size = tankSize;
+        const allActive = [p1Tank, p2Tank, p3Tank, p4Tank].filter(Boolean);
+        allActive.forEach(t => {
+          t.baseSize = tankSize;
+          t.size = Math.max(10, Math.round(tankSize * (t.sizeScale || 1)));
+        });
         const gCanvas = typeof document !== 'undefined' ? document.getElementById('gameCanvas') : null;
         if (gCanvas) {
           gCanvas.width = canvasWidth;
@@ -386,59 +521,88 @@ export function initNetworkCallbacks() {
         }
       }
 
-      p1Tank.syncFrom(newState.p1);
+      // Синхронізація всіх активних танків
+      const allTanks = [p1Tank, p2Tank, p3Tank, p4Tank];
+      const stateTanks = [newState.p1, newState.p2, newState.p3, newState.p4];
+      allTanks.forEach((tank, idx) => {
+        const slotId = idx + 1;
+        const tankState = stateTanks[idx];
+        if (!tank || !tankState) return;
 
-      if (Network.myPlayerId === 2) {
-        const hostHasStaleLoadout = Boolean(
-          newState.p2 &&
-          ((localLoadout.hull && newState.p2.hull && newState.p2.hull !== localLoadout.hull) ||
-           (localLoadout.turret && newState.p2.turret && newState.p2.turret !== localLoadout.turret))
-        );
-
-        if (hostHasStaleLoadout) {
-          p2Tank.x = newState.p2.x;
-          p2Tank.y = newState.p2.y;
-          if (Number.isFinite(newState.p2.bodyAngle)) p2Tank.bodyAngle = newState.p2.bodyAngle;
-          p2Tank.isDead = newState.p2.isDead;
-          p2Tank.respawnTimer = newState.p2.respawnTimer;
-          p2Tank.spawnShieldTimer = newState.p2.spawnShieldTimer;
-          p2Tank.animFrame = newState.p2.animFrame;
-          if (typeof newState.p2.hasSmokeScreen === 'boolean') p2Tank.hasSmokeScreen = newState.p2.hasSmokeScreen;
-          if (typeof newState.p2.smokeCooldownTimer === 'number') p2Tank.smokeCooldownTimer = newState.p2.smokeCooldownTimer;
-          if (typeof newState.p2.hasArtillery === 'boolean') p2Tank.hasArtillery = newState.p2.hasArtillery;
-          if (typeof newState.p2.artilleryCooldownTimer === 'number') p2Tank.artilleryCooldownTimer = newState.p2.artilleryCooldownTimer;
-          if (typeof newState.p2.hitInvulnTimer === 'number') p2Tank.hitInvulnTimer = newState.p2.hitInvulnTimer;
-          if (typeof newState.p2.roundTimeDmgBonus === 'number') p2Tank.roundTimeDmgBonus = newState.p2.roundTimeDmgBonus;
-          p2Tank.applyLoadout(localLoadout.hull, localLoadout.turret);
-          Network.sendLoadout(localLoadout);
-        } else {
-          p2Tank.syncFrom(newState.p2);
-          if (localLoadout.turret && (p2Tank.turretType !== localLoadout.turret || p2Tank.hullType !== localLoadout.hull)) {
-            p2Tank.applyLoadout(localLoadout.hull, localLoadout.turret);
+        if (Network.myPlayerId === slotId) {
+          tank.syncFrom(tankState);
+          if (localLoadout.turret && (tank.turretType !== localLoadout.turret || tank.hullType !== localLoadout.hull)) {
+            tank.applyLoadout(localLoadout.hull, localLoadout.turret);
           }
+          if (Number.isFinite(localInput.turretAngle)) {
+            tank.turretAngle = localInput.turretAngle;
+          }
+        } else {
+          tank.syncFrom(tankState);
         }
+      });
 
-        if (Number.isFinite(localInput.turretAngle)) {
-          p2Tank.turretAngle = localInput.turretAngle;
-        }
-      } else {
-        p2Tank.syncFrom(newState.p2);
+      if (newState.teamScores) {
+        Object.assign(teamScores, newState.teamScores);
+      }
+      if (newState.teamSettings) {
+        setTeamSettings(newState.teamSettings);
+      }
+      if (Array.isArray(newState.playerSlots)) {
+        setPlayerSlots(newState.playerSlots);
       }
 
       gameState.map = newState.map;
       if (newState.bushes) gameState.bushes = newState.bushes;
       if (newState.ice) gameState.ice = newState.ice;
       if (newState.tileHp) gameState.tileHp = newState.tileHp;
-      if (newState.visibility) gameState.visibility = newState.visibility;
+      if (newState.visibility) {
+        const m = newState.visibility.matrix;
+        gameState.visibility = {
+          p1CanSeeP2: Boolean(newState.visibility.p1CanSeeP2),
+          p2CanSeeP1: Boolean(newState.visibility.p2CanSeeP1),
+          matrix: m || null,
+          canSee: (obsId, tgtId) => Boolean(m && m[obsId] && m[obsId][tgtId])
+        };
+      }
       if (typeof newState.roundTimeFrames === 'number') gameState.roundTimeFrames = newState.roundTimeFrames;
       if (typeof newState.surrenderedBy === 'number') gameState.surrenderedBy = newState.surrenderedBy;
+      if (newState.currentMapEvent !== undefined) {
+        gameState.currentMapEvent = newState.currentMapEvent;
+      }
+      if (typeof newState.mapEventBannerTimer === 'number') {
+        gameState.mapEventBannerTimer = newState.mapEventBannerTimer;
+      }
+      if (newState.battleRoyaleZone) {
+        gameState.battleRoyaleZone = newState.battleRoyaleZone;
+      }
+      if (Array.isArray(newState.envArtilleryStrikes)) {
+        gameState.envArtilleryStrikes = newState.envArtilleryStrikes;
+      }
+      if (Array.isArray(newState.pendingArtilleryStrikes)) {
+        gameState.pendingArtilleryStrikes = newState.pendingArtilleryStrikes;
+      }
+
+      if (newState.tilePropertyMap !== undefined) {
+        gameState.tilePropertyMap = newState.tilePropertyMap;
+      }
+      if (Array.isArray(newState.flyingOrbs)) {
+        gameState.flyingOrbs = newState.flyingOrbs.map(od => {
+          const orb = new FlyingOrb(od.x, od.y, od.vx, od.vy);
+          const rot = typeof od.rotationAngle === 'number' ? od.rotationAngle : (od.angle || 0);
+          orb.rotationAngle = rot;
+          orb.angle = rot;
+          if (typeof od.radius === 'number') orb.radius = od.radius;
+          return orb;
+        });
+      }
 
       if (newState.perkSelection) {
         const prev = gameState.perkSelection || {};
         const wasActive = Boolean(prev.active);
         const nowActive = Boolean(newState.perkSelection.active);
-        const prevKey = JSON.stringify([prev.options, prev.picksRemaining, prev.rerollsLeft]);
-        const nextKey = JSON.stringify([newState.perkSelection.options, newState.perkSelection.picksRemaining, newState.perkSelection.rerollsLeft]);
+        const prevKey = JSON.stringify([prev.options, prev.optionCurses, prev.picksRemaining, prev.rerollsLeft]);
+        const nextKey = JSON.stringify([newState.perkSelection.options, newState.perkSelection.optionCurses, newState.perkSelection.picksRemaining, newState.perkSelection.rerollsLeft]);
         gameState.perkSelection = newState.perkSelection;
         if (wasActive !== nowActive || (nowActive && prevKey !== nextKey)) {
           renderPerkSelectionUI();
@@ -455,14 +619,21 @@ export function initNetworkCallbacks() {
       gameState.bullets = (newState.bullets || []).map(b => new Bullet(
         b.ownerId, b.x, b.y, b.vx, b.vy, b.damage || 20, b.angle || 0,
         {
+          team: b.team || b.ownerId,
           pierceLeft: b.pierceLeft || 0,
           ricochetsLeft: b.ricochetsLeft || 0,
           ignoreArmor: Boolean(b.ignoreArmor),
           instantBreak: Boolean(b.instantBreak),
-          invisibleToEnemy: Boolean(b.invisibleToEnemy)
+          invisibleToEnemy: Boolean(b.invisibleToEnemy),
+          isGuided: Boolean(b.isGuided),
+          isTracer: Boolean(b.isTracer),
+          speed: b.speed,
+          blindsOnHit: Boolean(b.blindsOnHit),
+          healsOnHit: Boolean(b.healsOnHit),
+          isMagnetic: Boolean(b.isMagnetic)
         }
       ));
-      gameState.mines = (newState.mines || []).map(m => new Mine(m.ownerId, m.x, m.y));
+      gameState.mines = (newState.mines || []).map(m => new Mine(m.ownerId, m.x, m.y, 40, 60, { team: m.team || m.ownerId }));
       gameState.smokeClouds = (newState.smokeClouds || []).map(sc => new SmokeCloud(
         sc.ownerId,
         sc.centerCol,
@@ -482,32 +653,41 @@ export function initNetworkCallbacks() {
       gameState.score2 = newState.score2;
       gameState.gameOver = newState.gameOver;
       gameState.winner = newState.winner;
-      gameState.isEnemyVisible = newState.visibility ? newState.visibility.p2CanSeeP1 : newState.isEnemyVisible;
+      gameState.isEnemyVisible = newState.visibility ? newState.visibility.p2CanSeeP1 : gameState.isEnemyVisible;
 
       updateHUD();
+    } catch (err) {
+      console.error('Помилка обробки onStateReceived на клієнті:', err);
+    }
     },
-    onInputReceived: (inputData) => {
-      setP2Input(inputData);
-      if (inputData && typeof inputData.selectedActive === 'string' && p2Tank) {
-        p2Tank.selectedActive = inputData.selectedActive;
-        p2Tank.localSelectedActive = inputData.selectedActive;
+    onInputReceived: (inputData, fromSlot = 2) => {
+      const slotId = fromSlot || 2;
+      if (slotId === 2) setP2Input(inputData);
+      else if (slotId === 3) setP3Input(inputData);
+      else if (slotId === 4) setP4Input(inputData);
+
+      const allTanks = [p1Tank, p2Tank, p3Tank, p4Tank];
+      const targetTank = allTanks[slotId - 1];
+      if (inputData && typeof inputData.selectedActive === 'string' && targetTank) {
+        targetTank.selectedActive = inputData.selectedActive;
+        targetTank.localSelectedActive = inputData.selectedActive;
       }
     },
-    onPerkSelected: (perkId) => {
+    onPerkSelected: (perkId, fromSlot = 2) => {
       if (Network.isHost && gameState.perkSelection && gameState.perkSelection.active) {
-        selectPerk(2, perkId);
+        selectPerk(fromSlot || gameState.perkSelection.loserId || 2, perkId);
       }
     },
-    onPerkReroll: () => {
+    onPerkReroll: (fromSlot = 2) => {
       if (Network.isHost && gameState.perkSelection && gameState.perkSelection.active) {
-        rerollPerkOptions(2);
+        rerollPerkOptions(fromSlot || gameState.perkSelection.loserId || 2);
       }
     },
     onEventReceived: (eventName, eventData) => {
       if (eventName === 'shoot') {
         sound.playShoot();
         if (eventData) {
-          const shooterTank = eventData.ownerId === 1 ? p1Tank : (eventData.ownerId === 2 ? p2Tank : null);
+          const shooterTank = [p1Tank, p2Tank, p3Tank, p4Tank][(eventData.ownerId || 1) - 1] || null;
           if (shooterTank) {
             shooterTank.recordShot();
           }
@@ -515,14 +695,39 @@ export function initNetworkCallbacks() {
           spawnMuzzleFlash(eventData.x, eventData.y, eventData.angle, eventData.ownerId || 0, hiddenFromEnemy);
           spawnSmoke(eventData.x, eventData.y, eventData.angle, eventData.ownerId || 0, hiddenFromEnemy);
         }
+      } else if (eventName === 'tracer') {
+        if (!Network.isHost && eventData) {
+          spawnTracerTrail(
+            eventData.x1,
+            eventData.y1,
+            eventData.x2,
+            eventData.y2,
+            eventData.ownerId || 0,
+            Boolean(eventData.hiddenFromEnemy)
+          );
+        }
+      } else if (eventName === 'blindTriggered') {
+        sound.playSpot();
+        if (eventData) {
+          const targetTank = [p1Tank, p2Tank, p3Tank, p4Tank][(eventData.targetId || 1) - 1] || null;
+          if (targetTank) {
+            targetTank.blindTimer = eventData.durationFrames || 90;
+          }
+          if (eventData.targetId === Network.myPlayerId) {
+            showToast('☀️ Осліплення! Ворожий снаряд засліпив ваш екран на 1.5с!');
+          } else {
+            showToast('☀️ Ваш постріл засліпив ворога на 1.5с!');
+          }
+        }
       } else if (eventName === 'minePlaced') {
         sound.playSteelHit();
       } else if (eventName === 'smokeUsed') {
         sound.playSpot();
         if (eventData) {
-          const smokeOwner = eventData.ownerId === 1 ? p1Tank : (eventData.ownerId === 2 ? p2Tank : null);
+          const smokeOwner = [p1Tank, p2Tank, p3Tank, p4Tank][(eventData.ownerId || 1) - 1] || null;
           if (smokeOwner) {
-            smokeOwner.smokeCooldownTimer = 1800;
+            smokeOwner.smokeActiveTimer = eventData.durationFrames || 300;
+            smokeOwner.smokeCooldownTimer = 0;
           }
           if (!Network.isHost) {
             gameState.smokeClouds.push(new SmokeCloud(
@@ -539,11 +744,38 @@ export function initNetworkCallbacks() {
           spawnDebris(sx, sy, 12, '#b2bec3');
         }
         updateHUD();
-      } else if (eventName === 'artilleryStrike') {
+      } else if (eventName === 'artilleryQueued') {
+        sound.playSpot();
+        if (eventData) {
+          const artyOwner = [p1Tank, p2Tank, p3Tank, p4Tank][(eventData.ownerId || 1) - 1] || null;
+          if (artyOwner) {
+            artyOwner.artilleryPendingTimer = eventData.delayFrames || 60;
+            artyOwner.artilleryCooldownTimer = 0;
+            artyOwner.targetingMode = null;
+          }
+          if (!Network.isHost && gameState) {
+            if (!Array.isArray(gameState.pendingArtilleryStrikes)) {
+              gameState.pendingArtilleryStrikes = [];
+            }
+            const delay = eventData.delayFrames || eventData.timer || 60;
+            gameState.pendingArtilleryStrikes.push({
+              ownerId: eventData.ownerId,
+              centerCol: eventData.centerCol,
+              centerRow: eventData.centerRow,
+              timer: delay,
+              maxTimer: delay,
+              timerFrames: delay,
+              maxFrames: delay
+            });
+          }
+        }
+        updateHUD();
+      } else if (eventName === 'artilleryStrike' || eventName === 'artilleryUsed') {
         sound.playExplosion();
         if (eventData) {
-          const artyOwner = eventData.ownerId === 1 ? p1Tank : (eventData.ownerId === 2 ? p2Tank : null);
+          const artyOwner = [p1Tank, p2Tank, p3Tank, p4Tank][(eventData.ownerId || 1) - 1] || null;
           if (artyOwner) {
+            artyOwner.artilleryPendingTimer = 0;
             artyOwner.artilleryCooldownTimer = 2100;
             artyOwner.targetingMode = null;
           }
@@ -553,6 +785,42 @@ export function initNetworkCallbacks() {
           triggerScreenShake(14, 22);
         }
         updateHUD();
+      } else if (eventName === 'beaconUsed') {
+        sound.playSpot();
+        if (eventData) {
+          const beaconOwner = [p1Tank, p2Tank, p3Tank, p4Tank][(eventData.ownerId || 1) - 1] || null;
+          if (beaconOwner) {
+            beaconOwner.beaconActiveTimer = 420;
+            beaconOwner.beaconCooldownTimer = 0;
+          }
+          if (Number.isFinite(eventData.x) && Number.isFinite(eventData.y)) {
+            spawnDebris(eventData.x, eventData.y, 12, '#2ecc71');
+          }
+        }
+        updateHUD();
+      } else if (eventName === 'radarUsed') {
+        sound.playSpot();
+        if (eventData) {
+          const radarOwner = [p1Tank, p2Tank, p3Tank, p4Tank][(eventData.ownerId || 1) - 1] || null;
+          if (radarOwner) {
+            radarOwner.spotActiveTimer = 600;
+            radarOwner.spotCooldownTimer = 0;
+          }
+        }
+        updateHUD();
+      } else if (eventName === 'turboUsed') {
+        sound.playSpot();
+        if (eventData) {
+          const turboOwner = [p1Tank, p2Tank, p3Tank, p4Tank][(eventData.ownerId || 1) - 1] || null;
+          if (turboOwner) {
+            turboOwner.turboActiveTimer = 240;
+            turboOwner.turboCooldownTimer = 0;
+          }
+          if (Number.isFinite(eventData.x) && Number.isFinite(eventData.y)) {
+            spawnDebris(eventData.x, eventData.y, 10, '#00e5ff');
+          }
+        }
+        updateHUD();
       } else if (eventName === 'surrender') {
         if (eventData) {
           const surId = eventData.surrenderingPlayerId || eventData.playerId || 1;
@@ -560,7 +828,7 @@ export function initNetworkCallbacks() {
         }
       } else if (eventName === 'manualReload') {
         if (!Network.isHost && eventData) {
-          const targetTank = eventData.playerId === 1 ? p1Tank : p2Tank;
+          const targetTank = [p1Tank, p2Tank, p3Tank, p4Tank][(eventData.playerId || 1) - 1] || p2Tank;
           if (targetTank && typeof targetTank.startManualReload === 'function') {
             targetTank.startManualReload();
           }
@@ -568,13 +836,18 @@ export function initNetworkCallbacks() {
       } else if (eventName === 'repairUsed') {
         sound.playSpot();
         if (eventData) {
-          spawnDebris(eventData.x, eventData.y, 10, '#2ecc71');
+          const targetTank = [p1Tank, p2Tank, p3Tank, p4Tank][(eventData.playerId || 1) - 1] || null;
+          const rx = Number.isFinite(eventData.x) ? eventData.x : (targetTank ? targetTank.x + targetTank.size / 2 : null);
+          const ry = Number.isFinite(eventData.y) ? eventData.y : (targetTank ? targetTank.y + targetTank.size / 2 : null);
+          if (Number.isFinite(rx) && Number.isFinite(ry)) {
+            spawnDebris(rx, ry, 10, '#2ecc71');
+          }
         }
         updateHUD();
       } else if (eventName === 'rebirth') {
         sound.playExplosion();
         if (eventData) {
-          const targetTank = eventData.playerId === 1 ? p1Tank : p2Tank;
+          const targetTank = [p1Tank, p2Tank, p3Tank, p4Tank][(eventData.playerId || 1) - 1] || p2Tank;
           if (targetTank) {
             targetTank.triggerRebirth();
             if (eventData.playerId === 1) {
@@ -594,6 +867,32 @@ export function initNetworkCallbacks() {
           showToast(`🔥 Гравець ${eventData.playerId} переродився на базі з повним HP!`);
           updateHUD();
         }
+      } else if (eventName === 'acidBarrelExploded') {
+        sound.playAcidSizzle();
+        if (eventData) {
+          if (!Network.isHost && gameState && gameState.map) {
+            if (gameState.map[eventData.row]) {
+              gameState.map[eventData.row][eventData.col] = 16;
+              if (gameState.tileHp && gameState.tileHp[eventData.row]) {
+                gameState.tileHp[eventData.row][eventData.col] = 0;
+              }
+            }
+            if (Array.isArray(eventData.extraAcids)) {
+              for (const pos of eventData.extraAcids) {
+                if (gameState.map[pos.r]) {
+                  gameState.map[pos.r][pos.c] = 16;
+                  if (gameState.tileHp && gameState.tileHp[pos.r]) {
+                    gameState.tileHp[pos.r][pos.c] = 0;
+                  }
+                }
+              }
+            }
+          }
+          const bx = (eventData.col + 0.5) * tileSize;
+          const by = (eventData.row + 0.5) * tileSize;
+          spawnDebris(bx, by, 12, '#26de81');
+          gameState.explosions.push(new Explosion(bx, by, 20, false));
+        }
       } else if (eventName === 'mineExplode') {
         sound.playExplosion();
         if (eventData) {
@@ -608,6 +907,7 @@ export function initNetworkCallbacks() {
             active: true,
             loserId: eventData.loserId,
             options: eventData.options || [],
+            optionCurses: eventData.optionCurses || {},
             picksRemaining: eventData.picksRemaining || 1,
             totalPicks: eventData.totalPicks || 1,
             rerollsLeft: eventData.rerollsLeft || 0,
@@ -618,46 +918,67 @@ export function initNetworkCallbacks() {
         }
       } else if (eventName === 'perkPartialChosen') {
         if (eventData) {
-          const targetTank = eventData.playerId === 1 ? p1Tank : p2Tank;
+          const targetTank = [p1Tank, p2Tank, p3Tank, p4Tank][(eventData.playerId || 1) - 1] || p2Tank;
           if (targetTank) {
             if (Array.isArray(eventData.acquiredPerks)) {
               targetTank.acquiredPerks = [...eventData.acquiredPerks];
-              targetTank.applyLoadout(targetTank.hullType, targetTank.turretType);
             } else if (eventData.perkId) {
               targetTank.applyPerk(eventData.perkId, { refreshRerolls: false });
             }
+            if (Array.isArray(eventData.acquiredCurses)) {
+              targetTank.acquiredCurses = [...eventData.acquiredCurses];
+            } else if (eventData.curseId) {
+              targetTank.applyCurse(eventData.curseId);
+            }
+            targetTank.applyLoadout(targetTank.hullType, targetTank.turretType);
           }
           if (gameState.perkSelection) {
             const selSource = eventData.perkSelection || eventData;
             gameState.perkSelection.options = selSource.options || [];
+            gameState.perkSelection.optionCurses = selSource.optionCurses || {};
             gameState.perkSelection.picksRemaining = selSource.picksRemaining || 1;
             if (typeof selSource.rerollsLeft === 'number') {
               gameState.perkSelection.rerollsLeft = selSource.rerollsLeft;
             }
           }
           const perkDef = PERK_TYPES[eventData.perkId];
+          const curseDef = eventData.curseId ? CURSE_TYPES[eventData.curseId] : null;
           if (perkDef) {
-            showToast(`✨ Гравець ${eventData.playerId} обрав 1-шу здібність: ${perkDef.title}`);
+            if (curseDef) {
+              showToast(`☠️ Гравець ${eventData.playerId} обрав: ${perkDef.title} + Прокляття «${curseDef.title}»!`);
+            } else {
+              showToast(`✨ Гравець ${eventData.playerId} обрав 1-шу здібність: ${perkDef.title}`);
+            }
           }
           renderPerkSelectionUI();
           updateHUD();
         }
       } else if (eventName === 'perkChosen') {
         if (eventData) {
-          const targetTank = eventData.playerId === 1 ? p1Tank : p2Tank;
+          const targetTank = [p1Tank, p2Tank, p3Tank, p4Tank][(eventData.playerId || 1) - 1] || p2Tank;
           if (targetTank) {
             if (Array.isArray(eventData.acquiredPerks)) {
               targetTank.acquiredPerks = [...eventData.acquiredPerks];
-              targetTank.applyLoadout(targetTank.hullType, targetTank.turretType);
             } else if (eventData.perkId) {
               targetTank.applyPerk(eventData.perkId, { refreshRerolls: false });
             }
+            if (Array.isArray(eventData.acquiredCurses)) {
+              targetTank.acquiredCurses = [...eventData.acquiredCurses];
+            } else if (eventData.curseId) {
+              targetTank.applyCurse(eventData.curseId);
+            }
+            targetTank.applyLoadout(targetTank.hullType, targetTank.turretType);
             targetTank.respawn({ preserveRerolls: true });
           }
-          gameState.perkSelection = { active: false, loserId: 0, options: [], picksRemaining: 1, totalPicks: 1, rerollsLeft: 0, maxRerolls: 0 };
+          gameState.perkSelection = { active: false, loserId: 0, options: [], optionCurses: {}, picksRemaining: 1, totalPicks: 1, rerollsLeft: 0, maxRerolls: 0 };
           const perkDef = PERK_TYPES[eventData.perkId];
+          const curseDef = eventData.curseId ? CURSE_TYPES[eventData.curseId] : null;
           if (perkDef) {
-            showToast(`✨ Гравець ${eventData.playerId} обрав здібність: ${perkDef.title}`);
+            if (curseDef) {
+              showToast(`☠️ Гравець ${eventData.playerId} обрав: ${perkDef.title} + Прокляття «${curseDef.title}»!`);
+            } else {
+              showToast(`✨ Гравець ${eventData.playerId} обрав здібність: ${perkDef.title}`);
+            }
           }
           renderPerkSelectionUI();
           updateHUD();
@@ -708,12 +1029,52 @@ export function initNetworkCallbacks() {
           gameState.bullets = [];
           gameState.mines = [];
           gameState.smokeClouds = [];
+          gameState.pendingArtilleryStrikes = [];
           showToast(`⚔️ РАУНД ${gameState.score1 + gameState.score2 + 1}!`);
           updateHUD();
+        }
+      } else if (eventName === 'mapEventSelected') {
+        if (!Network.isHost && eventData) {
+          gameState.currentMapEvent = eventData.eventId || null;
+          gameState.mapEventBannerTimer = 180;
+          if (eventData.tilePropertyMap) {
+            gameState.tilePropertyMap = eventData.tilePropertyMap;
+          }
+        }
+      } else if (eventName === 'orbSpawned') {
+        if (!Network.isHost && eventData) {
+          if (!Array.isArray(gameState.flyingOrbs)) gameState.flyingOrbs = [];
+          if (gameState.flyingOrbs.length < 5) {
+            gameState.flyingOrbs.push(new FlyingOrb(eventData.x, eventData.y));
+          }
         }
       }
     },
     onRematchReceived: (data = {}) => {
+      if (data && data.action === 'lobbyGameStart') {
+        Network.isGuestInLobbySetup = false;
+        if (Array.isArray(data.playerSlots)) {
+          setPlayerSlots(data.playerSlots);
+        }
+        if (data.teamSettings) {
+          setTeamSettings(data.teamSettings);
+        }
+        if (data.targetScore) {
+          setTargetWinScore(data.targetScore);
+        }
+        if (data.gameModes) {
+          setGameModes(data.gameModes);
+        }
+        if (data.map && Array.isArray(data.map.grid)) {
+          MapStorage.mergeRemoteMaps([data.map]);
+          setCurrentActiveMap(data.map);
+        }
+        setupGameMap(currentActiveMap, playerSlots);
+        startActiveMatch(false, Network.myPlayerId);
+        showToast('⚔️ Бій розпочато хостом! В бій!');
+        return;
+      }
+
       if (data && data.action === 'surrender') {
         const surId = data.surrenderingPlayerId || (Network.myPlayerId === 1 ? 2 : 1);
         surrenderMatch(surId, { fromNetwork: true });
@@ -726,14 +1087,22 @@ export function initNetworkCallbacks() {
 
       if (data && data.targetScore) {
         setTargetWinScore(data.targetScore);
+        const guestWinEl = typeof document !== 'undefined' ? document.getElementById('selectGuestWinScore') : null;
+        if (guestWinEl) guestWinEl.value = String(MAX_SCORE);
       }
 
-      // Оновлюємо обрану суперником мапу під час підготовки до реваншу
+      if (data && data.gameModes && typeof data.gameModes === 'object') {
+        setGameModes(data.gameModes);
+      }
+
+      // Оновлюємо обрану суперником мапу під час підготовки до реваншу або в лобі
       if (data && data.map && Array.isArray(data.map.grid)) {
         MapStorage.mergeRemoteMaps([data.map]);
         setCurrentActiveMap(data.map);
         updateHostMapDropdown();
-        const remMap = document.getElementById('selectRematchMap');
+        const guestMap = typeof document !== 'undefined' ? document.getElementById('selectGuestMap') : null;
+        if (guestMap && data.map.id) guestMap.value = data.map.id;
+        const remMap = typeof document !== 'undefined' ? document.getElementById('selectRematchMap') : null;
         if (remMap && data.map.id) remMap.value = data.map.id;
         updateAllMapPreviews();
       }
@@ -749,8 +1118,35 @@ export function initNetworkCallbacks() {
         }
       }
 
+      if (data && data.action === 'lobbySettingsSync') {
+        renderRematchUI();
+        updateAllMapPreviews();
+        updateHUD();
+        return;
+      }
+
+      if (data && data.action === 'guestReadyStart') {
+        if (Network.isHost) {
+          Network.peerWaitingForGuestReady = false;
+          if (currentActiveMap) {
+            setupGameMap(currentActiveMap);
+            Network.sendMap(currentActiveMap);
+          }
+          Network.sendLoadout(localLoadout);
+          startActiveMatch(true, 1);
+        }
+        return;
+      }
+
       if (data && data.action === 'winScoreChange') {
         showToast(`🏆 Ліміт перемог змінено: до ${MAX_SCORE} перемог`);
+        renderRematchUI();
+        updateHUD();
+        return;
+      }
+
+      if (data && data.action === 'gameModesChange') {
+        showToast(`⚙️ Режими бою оновлено!`);
         renderRematchUI();
         updateHUD();
         return;
@@ -792,6 +1188,7 @@ export function initNetworkCallbacks() {
             p1Ready: true,
             p2Ready: true,
             targetScore: MAX_SCORE,
+            gameModes: { ...selectedGameModes },
             loadout: { ...localLoadout },
             map: currentActiveMap
           });
