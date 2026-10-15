@@ -12,10 +12,10 @@
 import Network from './network.js?v=20261011_v17';
 import { sound } from './audio.js?v=20261011_v17';
 import {
-  p1Tank, p2Tank, gameState, renderTanks,
+  p1Tank, p2Tank, p3Tank, p4Tank, gameState, renderTanks,
   localInput, mouseX, mouseY,
   gridCols, gridRows, tileSize,
-  setP1Input, setP2Input, setMousePos,
+  setP1Input, setP2Input, setP3Input, setP4Input, setMousePos,
   uiHooks, registerUIHooks
 } from './state.js?v=20261011_v17';
 import {
@@ -55,6 +55,12 @@ export function resetPointerHoldState() {
   syncShootHoldState();
 }
 
+export function getLocalPlayerTank() {
+  const myId = Network.myPlayerId || 1;
+  const allTanks = [p1Tank, p2Tank, p3Tank, p4Tank];
+  return allTanks[myId - 1] || p1Tank;
+}
+
 /**
  * Передача локального вводу Хосту, Клієнту або активному танку в Полігоні
  */
@@ -62,6 +68,10 @@ export function sendLocalInput() {
   if (gameState && gameState.isTestMode) {
     if (Network.myPlayerId === 2) {
       setP2Input({ ...localInput });
+    } else if (Network.myPlayerId === 3) {
+      setP3Input({ ...localInput });
+    } else if (Network.myPlayerId === 4) {
+      setP4Input({ ...localInput });
     } else {
       setP1Input({ ...localInput });
     }
@@ -110,7 +120,7 @@ export function handleKey(e, isPressed) {
 
   if (action === 'prevActive' || action === 'nextActive') {
     if (isPressed && !e.repeat) {
-      const myTank = Network.myPlayerId === 1 ? p1Tank : p2Tank;
+      const myTank = getLocalPlayerTank();
       if (myTank) {
         cycleActiveForTank(myTank, action === 'prevActive' ? -1 : 1);
       }
@@ -119,7 +129,7 @@ export function handleKey(e, isPressed) {
   }
 
   if (action === 'reloadClip') {
-    const myTank = Network.myPlayerId === 1 ? p1Tank : p2Tank;
+    const myTank = getLocalPlayerTank();
     if (isPressed && myTank && !myTank.isDead && !(gameState.perkSelection && gameState.perkSelection.active)) {
       localInput.reloadClip = true;
       if (Network.isHost || !Network.connectionActive) {
@@ -134,14 +144,19 @@ export function handleKey(e, isPressed) {
   }
 
   if (action === 'space') {
-    // ПРОБІЛ активує обрану активну здібність (Міну, Димову завісу 3x3 або приціл Артилерії 3x3)
-    const myTank = Network.myPlayerId === 1 ? p1Tank : p2Tank;
-    if (myTank && (myTank.maxMines > 0 || myTank.hasSmokeScreen || myTank.hasArtillery)) {
-      const actives = typeof myTank.getAvailableActives === 'function' ? myTank.getAvailableActives() : [];
+    // ПРОБІЛ активує обрану активну здібність (Міну, Дим 3x3, Артилерію 3x3, Маяк, Радар, Керовану кулю або Турбо)
+    const myTank = getLocalPlayerTank();
+    const actives = (myTank && typeof myTank.getAvailableActives === 'function') ? myTank.getAvailableActives() : [];
+    localInput.placeMine = false;
+    localInput.useSmoke = false;
+    localInput.useBeacon = false;
+    localInput.useRadar = false;
+    localInput.toggleGuided = false;
+    localInput.useTurbo = false;
+
+    if (myTank && actives.length > 0) {
       const chosen = (myTank.selectedActive && actives.includes(myTank.selectedActive)) ? myTank.selectedActive : actives[0];
       if (chosen === 'artillery') {
-        localInput.placeMine = false;
-        localInput.useSmoke = false;
         if (isPressed && !e.repeat && !(gameState.perkSelection && gameState.perkSelection.active)) {
           triggerActiveAbilityForTank(myTank);
         }
@@ -149,28 +164,83 @@ export function handleKey(e, isPressed) {
         sendLocalInput();
         return;
       }
-      if (chosen === 'smoke') {
+      if (chosen === 'guided') {
+        if (isPressed && !e.repeat && !(gameState.perkSelection && gameState.perkSelection.active)) {
+          if (Network.isHost || !Network.connectionActive) {
+            triggerActiveAbilityForTank(myTank);
+          } else if (myTank.canUseGuidedBullet()) {
+            localInput.toggleGuided = true;
+            myTank.guidedBulletArmed = !myTank.guidedBulletArmed;
+            myTank.lastGuidedLocalTriggerTime = Date.now();
+            uiHooks.updateHUD();
+          }
+        }
+        syncShootHoldState();
+        sendLocalInput();
+        localInput.toggleGuided = false;
+        return;
+      }
+      if (chosen === 'turbo') {
+        localInput.useTurbo = Boolean(isPressed);
+        if (isPressed && !(gameState.perkSelection && gameState.perkSelection.active)) {
+          if (Network.isHost || !Network.connectionActive) {
+            triggerActiveAbilityForTank(myTank);
+            localInput.useTurbo = false;
+          } else if (myTank.canUseTurbo()) {
+            myTank.turboActiveTimer = 240;
+            myTank.turboCooldownTimer = 0;
+            myTank.lastTurboLocalTriggerTime = Date.now();
+            uiHooks.updateHUD();
+          }
+        }
+      } else if (chosen === 'beacon') {
+        localInput.useBeacon = Boolean(isPressed);
+        if (isPressed && !(gameState.perkSelection && gameState.perkSelection.active)) {
+          if (Network.isHost || !Network.connectionActive) {
+            triggerActiveAbilityForTank(myTank);
+            localInput.useBeacon = false;
+          } else if (myTank.canUseBeacon()) {
+            myTank.beaconActiveTimer = 420;
+            myTank.beaconCooldownTimer = 0;
+            myTank.lastBeaconLocalTriggerTime = Date.now();
+            uiHooks.updateHUD();
+          }
+        }
+      } else if (chosen === 'radar') {
+        localInput.useRadar = Boolean(isPressed);
+        if (isPressed && !(gameState.perkSelection && gameState.perkSelection.active)) {
+          if (Network.isHost || !Network.connectionActive) {
+            triggerActiveAbilityForTank(myTank);
+            localInput.useRadar = false;
+          } else if (myTank.canUseSpotEnemy()) {
+            myTank.spotActiveTimer = 600;
+            myTank.spotCooldownTimer = 0;
+            myTank.lastSpotLocalTriggerTime = Date.now();
+            uiHooks.updateHUD();
+          }
+        }
+      } else if (chosen === 'smoke') {
         localInput.useSmoke = Boolean(isPressed);
-        localInput.placeMine = false;
+        if (isPressed && !(gameState.perkSelection && gameState.perkSelection.active)) {
+          if (Network.isHost || !Network.connectionActive) {
+            triggerActiveAbilityForTank(myTank);
+            localInput.useSmoke = false;
+          } else if (myTank.canUseSmoke()) {
+            myTank.smokeActiveTimer = 300;
+            myTank.smokeCooldownTimer = 0;
+            myTank.lastSmokeLocalTriggerTime = Date.now();
+            uiHooks.updateHUD();
+          }
+        }
       } else {
         localInput.placeMine = Boolean(isPressed);
-        localInput.useSmoke = false;
-      }
-      if (isPressed && !(gameState.perkSelection && gameState.perkSelection.active)) {
-        if (Network.isHost || !Network.connectionActive) {
-          triggerActiveAbilityForTank(myTank);
-          localInput.placeMine = false;
-          localInput.useSmoke = false;
-        } else if (chosen === 'smoke' && myTank.canUseSmoke()) {
-          // Клієнтське передбачення кулдауну диму на HUD, щоб одразу показувало 30с
-          myTank.smokeCooldownTimer = 1800;
-          myTank.lastSmokeLocalTriggerTime = Date.now();
-          uiHooks.updateHUD();
+        if (isPressed && !(gameState.perkSelection && gameState.perkSelection.active)) {
+          if (Network.isHost || !Network.connectionActive) {
+            triggerActiveAbilityForTank(myTank);
+            localInput.placeMine = false;
+          }
         }
       }
-    } else {
-      localInput.placeMine = false;
-      localInput.useSmoke = false;
     }
     syncShootHoldState();
     sendLocalInput();
@@ -179,7 +249,7 @@ export function handleKey(e, isPressed) {
 
   if (action === 'useRepair') {
     // Клавіша H (англійська H) використовує ремонтний комплект (відновлює 20% від maxHp)
-    const myTank = Network.myPlayerId === 1 ? p1Tank : p2Tank;
+    const myTank = getLocalPlayerTank();
     if (myTank && myTank.maxRepairKits > 0) {
       localInput.useRepair = Boolean(isPressed);
       if (isPressed && (Network.isHost || !Network.connectionActive) && myTank.canUseRepairKit() && !(gameState.perkSelection && gameState.perkSelection.active)) {
@@ -220,9 +290,11 @@ export function onCanvasMouseMove(e) {
   const nextMy = (clientY - rect.top) * scaleY;
   if (!Number.isFinite(nextMx) || !Number.isFinite(nextMy)) return;
   setMousePos(nextMx, nextMy);
+  localInput.aimX = Math.round(nextMx);
+  localInput.aimY = Math.round(nextMy);
 
-  const myId = Network.myPlayerId;
-  const myTank = myId === 1 ? p1Tank : p2Tank;
+  const myId = Network.myPlayerId || 1;
+  const myTank = getLocalPlayerTank();
   if (myTank) {
     const cx = myTank.x + myTank.size / 2;
     const cy = myTank.y + myTank.size / 2;
@@ -231,10 +303,9 @@ export function onCanvasMouseMove(e) {
 
     myTank.turretAngle = angle;
     localInput.turretAngle = angle;
-    if (myId === 1) {
-      renderTanks.p1.turretAngle = angle;
-    } else {
-      renderTanks.p2.turretAngle = angle;
+    const rKey = `p${myId}`;
+    if (renderTanks[rKey]) {
+      renderTanks[rKey].turretAngle = angle;
     }
     sendLocalInput();
   }
@@ -259,8 +330,8 @@ export function onCanvasMouseDown(e) {
   onCanvasMouseMove(e);
 
   // Якщо активований приціл по блоку (Артилерія 3x3) — наступний ЛКМ б'є в обраний блок!
-  const myId = Network.myPlayerId;
-  const myTank = myId === 1 ? p1Tank : p2Tank;
+  const myId = Network.myPlayerId || 1;
+  const myTank = getLocalPlayerTank();
   if (myTank && !myTank.isDead && !(gameState.perkSelection && gameState.perkSelection.active) && myTank.targetingMode === 'artillery') {
     if (typeof myTank.canUseArtillery === 'function' && myTank.canUseArtillery()) {
       const targetCol = Math.max(0, Math.min(gridCols - 1, Math.floor(mouseX / tileSize)));
@@ -270,7 +341,8 @@ export function onCanvasMouseDown(e) {
         useArtilleryForTank(myTank, targetCol, targetRow);
       } else {
         localInput.artilleryStrike = { col: targetCol, row: targetRow };
-        myTank.artilleryCooldownTimer = 2100;
+        myTank.artilleryPendingTimer = 60;
+        myTank.artilleryCooldownTimer = 0;
         myTank.lastArtilleryLocalTriggerTime = Date.now();
         sendLocalInput();
         localInput.artilleryStrike = null;
@@ -297,8 +369,12 @@ export function onWindowMouseUp(e) {
   }
 }
 
+let inputListenersInitialized = false;
+
 export function initInputListeners() {
+  if (inputListenersInitialized) return;
   if (typeof window !== 'undefined') {
+    inputListenersInitialized = true;
     window.addEventListener('keydown', (e) => handleKey(e, true));
     window.addEventListener('keyup', (e) => handleKey(e, false));
     window.addEventListener('mousemove', onCanvasMouseMove);
@@ -307,8 +383,17 @@ export function initInputListeners() {
     window.addEventListener('blur', () => {
       isMouseDown = false;
       isTouchFireDown = false;
+      localInput.up = false;
+      localInput.down = false;
+      localInput.left = false;
+      localInput.right = false;
       localInput.placeMine = false;
       localInput.useSmoke = false;
+      localInput.useBeacon = false;
+      localInput.useRadar = false;
+      localInput.toggleGuided = false;
+      localInput.useTurbo = false;
+      localInput.useRepair = false;
       localInput.reloadClip = false;
       syncShootHoldState();
       sendLocalInput();
@@ -319,7 +404,7 @@ export function initInputListeners() {
 export function setupMobileControls() {
   const bindBtn = (id, action) => {
     const el = document.getElementById(id);
-    if (!el) return;
+    if (!el || el._mobileControlBound) return; el._mobileControlBound = true;
 
     const press = (e) => {
       e.preventDefault();
