@@ -4,19 +4,22 @@
  */
 
 import {
-  MIN_WIN_SCORE, MAX_WIN_SCORE, HULL_TYPES, TURRET_TYPES, PERK_RARITIES, PERK_TYPES
+  MIN_WIN_SCORE, MAX_WIN_SCORE, HULL_TYPES, TURRET_TYPES, PERK_RARITIES, PERK_TYPES, CURSE_TYPES, MAP_EVENTS
 } from './config.js?v=20261011_v17';
 import { TILE_TYPES, syncTileRegistry } from './tiles.js?v=20261011_v17';
-import { MapEditor, MapStorage, updateHostMapDropdown, renderMapPreview, updateAllMapPreviews, showToast } from './editor.js?v=20261011_v17';
+import { MapEditor, MapStorage, updateHostMapDropdown, renderMapPreview, updateAllMapPreviews, showToast, checkMapPotentialSoftlock, countMapSpawns } from './editor.js?v=20261011_v17';
 import Network from './network.js?v=20261011_v17';
 import { sound } from './audio.js?v=20261011_v17';
 import {
-  MAX_SCORE, setTargetWinScore, currentActiveMap, p1Tank, p2Tank,
-  localLoadout, p1Loadout, p2Loadout, testTargetPlayerId, currentFps,
+  MAX_SCORE, setTargetWinScore, selectedGameModes, setGameModes,
+  currentActiveMap, tileSize, p1Tank, p2Tank, p3Tank, p4Tank,
+  localLoadout, p1Loadout, p2Loadout, p3Loadout, p4Loadout,
+  playerSlots, setPlayerSlots, teamSettings, setTeamSettings, teamScores, setTeamScore,
+  testTargetPlayerId, currentFps,
   gameState, renderTanks, previousVisibleState, localInput,
-  setCurrentActiveMap, setP1Loadout, setP2Loadout, setPreviousVisibleState,
+  setCurrentActiveMap, setP1Loadout, setP2Loadout, setP3Loadout, setP4Loadout, setPreviousVisibleState,
   setupGameMap, restoreMapState, resetRoundSpawns, resetForRematch,
-  registerUIHooks
+  registerUIHooks, setMapEvent
 } from './state.js?v=20261011_v17';
 import {
   cycleActiveForTank, selectActiveForTank, useRepairKitForTank,
@@ -30,10 +33,65 @@ import {
 let pendingRoomId = '';
 
 /**
+ * Синхронізує галочки вибору режимів у Головному меню, Меню гостя та Вікні реваншу
+ */
+export function syncGameModeCheckboxes() {
+  if (typeof document === 'undefined') return;
+  const modes = (gameState && gameState.gameModes) ? gameState.gameModes : selectedGameModes;
+  if (!modes) return;
+
+  const prefixes = ['chkHostMode', 'chkGuestMode', 'chkRematchMode'];
+  const keyToSuffix = {
+    perks: 'Perks',
+    curses: 'Curses',
+    mapEvents: 'MapEvents'
+  };
+
+  prefixes.forEach(prefix => {
+    Object.entries(keyToSuffix).forEach(([modeKey, suffix]) => {
+      const el = document.getElementById(`${prefix}${suffix}`);
+      if (el) {
+        el.checked = Boolean(modes[modeKey]);
+        if (prefix === 'chkGuestMode') {
+          el.disabled = true;
+        }
+      }
+    });
+  });
+}
+
+/**
+ * Зчитує стан галочок режимів з вказаної групи ('chkHostMode' | 'chkGuestMode' | 'chkRematchMode')
+ */
+export function readGameModeCheckboxes(prefix = 'chkHostMode') {
+  if (typeof document === 'undefined') return selectedGameModes;
+  const keyToSuffix = {
+    perks: 'Perks',
+    curses: 'Curses',
+    mapEvents: 'MapEvents'
+  };
+  const nextModes = {};
+  let foundAny = false;
+  Object.entries(keyToSuffix).forEach(([modeKey, suffix]) => {
+    const el = document.getElementById(`${prefix}${suffix}`);
+    if (el) {
+      nextModes[modeKey] = Boolean(el.checked);
+      foundAny = true;
+    }
+  });
+  if (foundAny) {
+    setGameModes(nextModes);
+    syncGameModeCheckboxes();
+  }
+  return selectedGameModes;
+}
+
+/**
  * Відображення стану готовності обох гравців до реваншу та обраного спорядження у вікні завершення матчу
  */
 export function renderRematchUI() {
   if (typeof document === 'undefined') return;
+  syncGameModeCheckboxes();
   const rematch = (gameState && gameState.rematch) ? gameState.rematch : { p1Ready: false, p2Ready: false };
   const p1Pill = document.getElementById('rematchStatusP1');
   const p2Pill = document.getElementById('rematchStatusP2');
@@ -93,12 +151,14 @@ export function requestRematch(playerId = Network.myPlayerId) {
     gameState.rematch = { p1Ready: false, p2Ready: false };
   }
 
-  // Зчитуємо обрані під час реваншу корпус, дуло, карту та кількість перемог з селектів UI
+  // Зчитуємо обрані під час реваншу корпус, дуло, карту, режими та кількість перемог з селектів UI
   if (playerId === Network.myPlayerId && typeof document !== 'undefined') {
     const remHull = document.getElementById('selectRematchHull');
     const remTurret = document.getElementById('selectRematchTurret');
     const remMap = document.getElementById('selectRematchMap');
     const remWinScore = document.getElementById('selectRematchWinScore');
+
+    readGameModeCheckboxes('chkRematchMode');
 
     if (remHull && remHull.value && HULL_TYPES[remHull.value]) {
       localLoadout.hull = remHull.value;
@@ -112,6 +172,11 @@ export function requestRematch(playerId = Network.myPlayerId) {
     }
     if (remWinScore && remWinScore.value) {
       setTargetWinScore(Number(remWinScore.value));
+    }
+
+    if (selectedGameModes.mapEvents && checkMapPotentialSoftlock(currentActiveMap)) {
+      showToast('⚠️ Неможливо запустити реванш: на цій карті можливий софт-лок при увімкнених подіях («Обман зору»). Вимкніть «Події на карті» або змініть карту!');
+      return false;
     }
   }
 
@@ -138,6 +203,7 @@ export function requestRematch(playerId = Network.myPlayerId) {
         p1Ready: true,
         p2Ready: true,
         targetScore: MAX_SCORE,
+        gameModes: { ...selectedGameModes },
         loadout: { ...localLoadout },
         map: currentActiveMap
       });
@@ -149,6 +215,7 @@ export function requestRematch(playerId = Network.myPlayerId) {
         playerId: 2,
         p2Ready: true,
         targetScore: MAX_SCORE,
+        gameModes: { ...selectedGameModes },
         loadout: { ...localLoadout },
         map: currentActiveMap
       });
@@ -164,6 +231,7 @@ export function requestRematch(playerId = Network.myPlayerId) {
     p1Ready: gameState.rematch.p1Ready,
     p2Ready: gameState.rematch.p2Ready,
     targetScore: MAX_SCORE,
+    gameModes: { ...selectedGameModes },
     loadout: { ...localLoadout },
     map: currentActiveMap
   });
@@ -190,6 +258,7 @@ export function renderMechanicsCatalog() {
 
   const tilesList = Object.values(TILE_TYPES).filter(t => t && t.id !== 0);
   const perksList = Object.values(PERK_TYPES);
+  const cursesList = Object.values(CURSE_TYPES || {});
   const hullsList = Object.values(HULL_TYPES);
   const turretsList = Object.values(TURRET_TYPES);
 
@@ -372,6 +441,55 @@ export function renderMechanicsCatalog() {
     perksSec.appendChild(perksBody);
     container.appendChild(perksSec);
 
+    // 2.5. СЕКЦІЯ (ЗГОРТАЄТЬСЯ): ПРОКЛЯТТЯ (CURSE_TYPES)
+    if (cursesList.length > 0) {
+      const cursesSec = document.createElement('details');
+      cursesSec.className = 'mechanics-details mechanics-section';
+      cursesSec.open = true;
+      applyUnclippedBlockStyle(cursesSec);
+
+      const cursesSummary = document.createElement('summary');
+      cursesSummary.className = 'mechanics-details-summary mechanics-section-title';
+      cursesSummary.innerHTML = `
+        <span>☠️ ПРОКЛЯТТЯ (${cursesList.length} • Базовий шанс: 15%)</span>
+        <span class="mechanics-details-arrow">▼</span>
+      `;
+      cursesSec.appendChild(cursesSummary);
+
+      const cursesBody = document.createElement('div');
+      cursesBody.className = 'mechanics-details-body';
+      applyUnclippedBlockStyle(cursesBody);
+      const cursesGrid = document.createElement('div');
+      cursesGrid.className = 'mechanics-grid';
+
+      cursesList.forEach(curse => {
+        const card = document.createElement('div');
+        card.className = 'mechanics-item-card curse-mechanics-card';
+        card.dataset.curseId = curse.id;
+
+        const stackLabel = curse.stackable ? '🔄 Може дублюватися' : '⭐ Унікальна (1 раз)';
+
+        card.innerHTML = `
+          <div class="mechanics-perk-icon">${curse.icon || '☠️'}</div>
+          <div class="mechanics-item-info">
+            <div class="mechanics-item-title">
+              <span>${curse.title}</span>
+              <span class="perk-rarity-badge" style="border:1px solid #ff4757; color:#ff6b81; background:rgba(255,71,87,0.18);">ПРОКЛЯТТЯ</span>
+            </div>
+            <div class="mechanics-item-desc">${curse.description || ''}</div>
+            <div class="mechanics-item-tags">
+              <span class="mechanics-tag">${stackLabel}</span>
+            </div>
+          </div>
+        `;
+        cursesGrid.appendChild(card);
+      });
+
+      cursesBody.appendChild(cursesGrid);
+      cursesSec.appendChild(cursesBody);
+      container.appendChild(cursesSec);
+    }
+
     // 3. СЕКЦІЯ (ЗГОРТАЄТЬСЯ): КОРПУСИ ТА ГАРМАТИ (автоматично з HULL_TYPES та TURRET_TYPES)
     const loadoutSec = document.createElement('details');
     loadoutSec.className = 'mechanics-details mechanics-section';
@@ -395,8 +513,11 @@ export function renderMechanicsCatalog() {
     hullsList.forEach(h => {
       const card = document.createElement('div');
       card.className = 'mechanics-item-card';
+      const sizeTag = (h.baseSizeScale && h.baseSizeScale !== 1)
+        ? `<span class="mechanics-tag">📐 Розмір: ${Math.round(h.baseSizeScale * 100)}%</span>`
+        : '';
       card.innerHTML = `
-        <div class="mechanics-perk-icon">🛡️</div>
+        <div class="mechanics-perk-icon">${h.passiveIcon || '🛡️'}</div>
         <div class="mechanics-item-info">
           <div class="mechanics-item-title">${h.name}</div>
           <div class="mechanics-item-desc">${h.description}</div>
@@ -404,6 +525,7 @@ export function renderMechanicsCatalog() {
             <span class="mechanics-tag">❤️ ${h.maxHp} HP</span>
             <span class="mechanics-tag">🛡️ Броня: ${Math.round((h.armor || 0.2) * 100)}%</span>
             <span class="mechanics-tag">⚡ Швидкість: ${h.speed}</span>
+            ${sizeTag}
           </div>
         </div>
       `;
@@ -414,6 +536,12 @@ export function renderMechanicsCatalog() {
       const card = document.createElement('div');
       card.className = 'mechanics-item-card';
       const extraTags = [];
+      const halfSpread = typeof t.spreadHalfAngleDeg === 'number' ? t.spreadHalfAngleDeg : 2.5;
+      if (t.noSpread || halfSpread <= 0) {
+        extraTags.push(`<span class="mechanics-tag">🎯 Розкид: 0° (без розкиду)</span>`);
+      } else {
+        extraTags.push(`<span class="mechanics-tag">🎯 Розкид: ±${halfSpread}° (${halfSpread * 2}°)</span>`);
+      }
       if (t.bulletPierce > 0) extraTags.push(`<span class="mechanics-tag">⚡ Пробиття куль: ${t.bulletPierce}</span>`);
       if (t.ricochet > 0) extraTags.push(`<span class="mechanics-tag">🪃 Рикошет: ${t.ricochet}</span>`);
       card.innerHTML = `
@@ -435,6 +563,49 @@ export function renderMechanicsCatalog() {
     loadoutBody.appendChild(loadoutGrid);
     loadoutSec.appendChild(loadoutBody);
     container.appendChild(loadoutSec);
+
+    // 5. СЕКЦІЯ (ЗГОРТАЄТЬСЯ): ДИНАМІЧНІ ПОДІЇ НА КАРТІ (MAP_EVENTS)
+    const eventsList = Object.values(MAP_EVENTS || {});
+    if (eventsList.length > 0) {
+      const eventsSec = document.createElement('details');
+      eventsSec.className = 'mechanics-details mechanics-section';
+      eventsSec.open = true;
+      applyUnclippedBlockStyle(eventsSec);
+
+      const eventsSummary = document.createElement('summary');
+      eventsSummary.className = 'mechanics-details-summary mechanics-section-title';
+      eventsSummary.innerHTML = `
+        <span>🌋 ПОДІЇ НА КАРТІ (${eventsList.length} • Шанс активації: 90%)</span>
+        <span class="mechanics-details-arrow">▼</span>
+      `;
+      eventsSec.appendChild(eventsSummary);
+
+      const eventsBody = document.createElement('div');
+      eventsBody.className = 'mechanics-details-body';
+      applyUnclippedBlockStyle(eventsBody);
+      const eventsGrid = document.createElement('div');
+      eventsGrid.className = 'mechanics-grid';
+
+      eventsList.forEach(ev => {
+        const card = document.createElement('div');
+        card.className = 'mechanics-item-card';
+        card.innerHTML = `
+          <div class="mechanics-perk-icon">${ev.icon || '🌋'}</div>
+          <div class="mechanics-item-info">
+            <div class="mechanics-item-title">
+              <span>${ev.name}</span>
+              <span class="perk-rarity-badge" style="border:1px solid #e17055; color:#fab1a0; background:rgba(225,112,85,0.18);">ПОДІЯ КАРТИ</span>
+            </div>
+            <div class="mechanics-item-desc">${ev.description || ev.desc || ''}</div>
+          </div>
+        `;
+        eventsGrid.appendChild(card);
+      });
+
+      eventsBody.appendChild(eventsGrid);
+      eventsSec.appendChild(eventsBody);
+      container.appendChild(eventsSec);
+    }
   });
 }
 
@@ -479,9 +650,9 @@ export function renderPerksSidebars() {
   const activeSwitchBanner = document.getElementById('activeSwitchHintBanner');
 
   const myId = Network.myPlayerId || 1;
-  const myTank = myId === 1 ? p1Tank : p2Tank;
+  const myTank = [p1Tank, p2Tank, p3Tank, p4Tank][myId - 1] || p1Tank;
 
-  // 1. Ліва панель: ПАСИВНІ ЗДІБНОСТІ (лише значок, назва та кількість, більший шрифт, без опису)
+  // 1. Ліва панель: ПАСИВНІ ЗДІБНОСТІ + ПАСИВКИ КОРПУСІВ + ПРОКЛЯТТЯ (лише значок, назва та кількість, більший шрифт, без опису)
   if (passiveList) {
     passiveList.innerHTML = '';
     const owned = (myTank && Array.isArray(myTank.acquiredPerks)) ? myTank.acquiredPerks : [];
@@ -498,8 +669,21 @@ export function renderPerksSidebars() {
       passiveStacks[perkId]++;
     });
 
+    const ownedCurses = (myTank && Array.isArray(myTank.acquiredCurses)) ? myTank.acquiredCurses : [];
+    const curseStacks = {};
+    const curseOrder = [];
+    ownedCurses.forEach(curseId => {
+      const cDef = CURSE_TYPES[curseId];
+      if (!cDef) return;
+      if (!curseStacks[curseId]) {
+        curseStacks[curseId] = 0;
+        curseOrder.push(curseId);
+      }
+      curseStacks[curseId]++;
+    });
+
     const hullCfg = (myTank && myTank.hullType) ? HULL_TYPES[myTank.hullType] : null;
-    const hasHullPassive = Boolean((myTank && myTank.unpierceableArmor) || (hullCfg && hullCfg.unpierceableArmor));
+    const hasHullPassive = Boolean(hullCfg && (hullCfg.passiveTitle || hullCfg.unpierceableArmor));
     const hasPhantomComeback = Boolean(
       myTank && myTank.hullType === 'phantom' &&
       typeof myTank.isPhantomComebackActive === 'function' &&
@@ -508,14 +692,24 @@ export function renderPerksSidebars() {
 
     if (hasHullPassive) {
       const hullPill = document.createElement('div');
-      hullPill.className = 'sidebar-perk-pill passive-pill hull-passive-pill perk-rarity-divine';
-      hullPill.dataset.perkId = 'hull_unpierceable_armor';
+      const rarityClass = (hullCfg && hullCfg.unpierceableArmor) ? 'perk-rarity-divine' : 'perk-rarity-rare';
+      hullPill.className = `sidebar-perk-pill passive-pill hull-passive-pill ${rarityClass}`;
+      hullPill.dataset.perkId = (myTank && myTank.hullType === 'phantom')
+        ? 'hull_unpierceable_armor'
+        : `hull_passive_${(myTank && myTank.hullType) || 'standard'}`;
+
+      let stackTag = 'КОРПУС';
+      if (myTank && myTank.hullType === 'heavy' && typeof myTank.isInCoverOrWater === 'function') {
+        const inCover = myTank.isInCoverOrWater(gameState && gameState.map, gameState && gameState.bushes, tileSize);
+        if (inCover) stackTag = '+10%🛡️';
+      }
+
       hullPill.innerHTML = `
         <div class="sidebar-perk-icon">${(hullCfg && hullCfg.passiveIcon) || '🛡️'}</div>
         <div class="sidebar-perk-info">
           <div class="sidebar-perk-title-row">
-            <span class="sidebar-perk-title">${(hullCfg && hullCfg.passiveTitle) || 'Непробивна броня'}</span>
-            <span class="sidebar-perk-stack">КОРПУС</span>
+            <span class="sidebar-perk-title">${(hullCfg && hullCfg.passiveTitle) || 'Пасивка корпусу'}</span>
+            <span class="sidebar-perk-stack">${stackTag}</span>
           </div>
         </div>
       `;
@@ -538,7 +732,7 @@ export function renderPerksSidebars() {
       passiveList.appendChild(comebackPill);
     }
 
-    if (passiveOrder.length === 0 && !hasHullPassive && !hasPhantomComeback) {
+    if (passiveOrder.length === 0 && curseOrder.length === 0 && !hasHullPassive && !hasPhantomComeback) {
       const empty = document.createElement('div');
       empty.className = 'sidebar-empty-hint';
       empty.textContent = 'Немає пасивних здібностей';
@@ -571,6 +765,26 @@ export function renderPerksSidebars() {
         `;
         passiveList.appendChild(pill);
       });
+
+      curseOrder.forEach(curseId => {
+        const cDef = CURSE_TYPES[curseId];
+        const stacks = curseStacks[curseId];
+        const pill = document.createElement('div');
+        pill.className = 'sidebar-perk-pill passive-pill curse-pill';
+        pill.dataset.curseId = curseId;
+        pill.dataset.stacks = String(stacks);
+
+        pill.innerHTML = `
+          <div class="sidebar-perk-icon">${cDef.icon || '☠️'}</div>
+          <div class="sidebar-perk-info">
+            <div class="sidebar-perk-title-row">
+              <span class="sidebar-perk-title">☠️ ${cDef.title}</span>
+              <span class="sidebar-perk-stack curse-stack-badge">x${stacks}</span>
+            </div>
+          </div>
+        `;
+        passiveList.appendChild(pill);
+      });
     }
   }
 
@@ -587,6 +801,10 @@ export function renderPerksSidebars() {
     const getSpaceActiveTitle = (key) => {
       if (key === 'artillery') return '🚀 Артилерія 3×3';
       if (key === 'smoke') return '💨 Димова завіса';
+      if (key === 'beacon') return '🚨 Маяк відновлення';
+      if (key === 'radar') return '📡 Підсвітка ворога';
+      if (key === 'guided') return '🎯 Керована куля';
+      if (key === 'turbo') return '🚀 Турбо (+50% шв.)';
       return '💣 Міни';
     };
 
@@ -628,34 +846,136 @@ export function renderPerksSidebars() {
 
     if (myTank && myTank.hasSmokeScreen) {
       const def = PERK_TYPES.smoke_screen;
+      const isAct = (myTank.smokeActiveTimer || 0) > 0;
       const onCd = (myTank.smokeCooldownTimer || 0) > 0;
       const secLeft = onCd ? Math.ceil(myTank.smokeCooldownTimer / 60) : 0;
+      let statusText = 'ГОТОВО (5с дим)';
+      if (isAct) {
+        statusText = `💨 АКТИВНО: ${Math.ceil(myTank.smokeActiveTimer / 60)}с`;
+      } else if (onCd) {
+        statusText = `Перезарядка: ${secLeft}с`;
+      }
       activeEntries.push({
         perkId: 'smoke_screen',
         activeKey: 'smoke',
         isSpace: true,
         def,
         keybindText: '[ПРОБІЛ]',
-        statusText: onCd ? `Перезарядка: ${secLeft}с` : 'ГОТОВО (5с дим)',
-        statusClass: onCd ? 'cooldown' : 'ready'
+        statusText,
+        statusClass: isAct ? 'ready' : (onCd ? 'cooldown' : 'ready')
       });
     }
 
     if (myTank && myTank.hasArtillery) {
       const def = PERK_TYPES.artillery_strike;
+      const isPending = (myTank.artilleryPendingTimer || 0) > 0;
       const onCd = (myTank.artilleryCooldownTimer || 0) > 0;
       const secLeft = onCd ? Math.ceil(myTank.artilleryCooldownTimer / 60) : 0;
       const isTargeting = myTank.targetingMode === 'artillery';
+      let statusText = 'ГОТОВО (Зона 3×3)';
+      if (isPending) {
+        statusText = `🚀 УДАР ЧЕРЕЗ: ${(myTank.artilleryPendingTimer / 60).toFixed(1)}с`;
+      } else if (isTargeting) {
+        statusText = '🎯 ОБЕРІТЬ БЛОК [ЛКМ]';
+      } else if (onCd) {
+        statusText = `Перезарядка: ${secLeft}с`;
+      }
       activeEntries.push({
         perkId: 'artillery_strike',
         activeKey: 'artillery',
         isSpace: true,
         def,
         keybindText: '[ПРОБІЛ ➔ ЛКМ]',
-        statusText: isTargeting
-          ? '🎯 ОБЕРІТЬ БЛОК [ЛКМ]'
-          : (onCd ? `Перезарядка: ${secLeft}с` : 'ГОТОВО (Зона 3×3)'),
-        statusClass: onCd ? 'cooldown' : 'ready'
+        statusText,
+        statusClass: isPending ? 'ready' : (onCd ? 'cooldown' : 'ready')
+      });
+    }
+
+    if (myTank && myTank.hasBeaconHeal) {
+      const def = PERK_TYPES.beacon_heal;
+      const isAct = (myTank.beaconActiveTimer || 0) > 0;
+      const onCd = (myTank.beaconCooldownTimer || 0) > 0;
+      const healPerSec = 2 * Math.max(1, myTank.beaconStacks || myTank.beaconHealStacks || 1);
+      let statusText = `ГОТОВО (+${healPerSec} HP/с)`;
+      if (isAct) {
+        statusText = `🟢 ЛІКУЄ: ${Math.ceil(myTank.beaconActiveTimer / 60)}с (+${healPerSec}/с)`;
+      } else if (onCd) {
+        statusText = `Перезарядка: ${Math.ceil(myTank.beaconCooldownTimer / 60)}с`;
+      }
+      activeEntries.push({
+        perkId: 'beacon_heal',
+        activeKey: 'beacon',
+        isSpace: true,
+        def,
+        keybindText: '[ПРОБІЛ]',
+        statusText,
+        statusClass: isAct ? 'ready' : (onCd ? 'cooldown' : 'ready')
+      });
+    }
+
+    if (myTank && myTank.hasSpotEnemy) {
+      const def = PERK_TYPES.spot_enemy_10s;
+      const isAct = (myTank.spotActiveTimer || 0) > 0;
+      const onCd = (myTank.spotCooldownTimer || 0) > 0;
+      let statusText = 'ГОТОВО (10с радар)';
+      if (isAct) {
+        statusText = `📡 ПІДСВІТКА: ${Math.ceil(myTank.spotActiveTimer / 60)}с`;
+      } else if (onCd) {
+        statusText = `Перезарядка: ${Math.ceil(myTank.spotCooldownTimer / 60)}с`;
+      }
+      activeEntries.push({
+        perkId: 'spot_enemy_10s',
+        activeKey: 'radar',
+        isSpace: true,
+        def,
+        keybindText: '[ПРОБІЛ]',
+        statusText,
+        statusClass: isAct ? 'ready' : (onCd ? 'cooldown' : 'ready')
+      });
+    }
+
+    if (myTank && myTank.hasGuidedBullet) {
+      const def = PERK_TYPES.guided_bullet;
+      const isAct = Boolean(myTank.guidedBulletActive);
+      const isArmed = Boolean(myTank.guidedBulletArmed);
+      const onCd = (myTank.guidedCooldownTimer || 0) > 0;
+      let statusText = 'ГОТОВО (2x шкода)';
+      if (isAct) {
+        statusText = '🎯 КУЛЯ В ПОЛЬОТІ';
+      } else if (isArmed) {
+        statusText = '🎯 ЗАРЯДЖЕНО [ЛКМ]';
+      } else if (onCd) {
+        statusText = `Перезарядка: ${Math.ceil(myTank.guidedCooldownTimer / 60)}с`;
+      }
+      activeEntries.push({
+        perkId: 'guided_bullet',
+        activeKey: 'guided',
+        isSpace: true,
+        def,
+        keybindText: '[ПРОБІЛ ➔ ЛКМ]',
+        statusText,
+        statusClass: (isAct || isArmed) ? 'ready' : (onCd ? 'cooldown' : 'ready')
+      });
+    }
+
+    if (myTank && myTank.hasTurboBoost) {
+      const def = PERK_TYPES.turbo_boost;
+      const isAct = (myTank.turboActiveTimer || 0) > 0;
+      const onCd = (myTank.turboCooldownTimer || 0) > 0;
+      let statusText = 'ГОТОВО (4с, +50% шв.)';
+      if (isAct) {
+        statusText = `🚀 ТУРБО: ${Math.ceil(myTank.turboActiveTimer / 60)}с (+50%)`;
+      } else if (onCd) {
+        statusText = `Перезарядка: ${Math.ceil(myTank.turboCooldownTimer / 60)}с`;
+      }
+      activeEntries.push({
+        perkId: 'turbo_boost',
+        activeKey: 'turbo',
+        isSpace: true,
+        def,
+        keybindText: '[ПРОБІЛ]',
+        statusText,
+        statusClass: isAct ? 'ready' : (onCd ? 'cooldown' : 'ready')
       });
     }
 
@@ -728,6 +1048,7 @@ export function renderPerksSidebars() {
 }
 
 export function updateHUD() {
+  if (typeof document === 'undefined') return;
   const s1 = document.getElementById('scoreP1');
   const s2 = document.getElementById('scoreP2');
   if (s1) s1.textContent = gameState.score1;
@@ -779,19 +1100,23 @@ export function updateHUD() {
   syncPipsContainer(document.getElementById('pipsP2'), gameState.score2, 'active-p2');
 
   // Оновлення власної смужки здоров'я, показника броні, куль у касеті та характеристик танка під HP баром
-  const myId = Network.myPlayerId;
-  const myTank = myId === 1 ? p1Tank : p2Tank;
+  const myId = Network.myPlayerId || 1;
+  const myTank = myId === 1 ? p1Tank : (myId === 2 ? p2Tank : (myId === 3 ? p3Tank : p4Tank));
   const hudHpText = document.getElementById('hudHpText');
   const hudArmorBadge = document.getElementById('hudArmorBadge');
   const hudAmmoBadge = document.getElementById('hudAmmoBadge');
   const hudStatDamage = document.getElementById('hudStatDamage');
   const hudStatFireRate = document.getElementById('hudStatFireRate');
+  const hudStatSpread = document.getElementById('hudStatSpread');
   const hudStatSpeed = document.getElementById('hudStatSpeed');
   const hudStatBulletSpeed = document.getElementById('hudStatBulletSpeed');
   const hudStatFov = document.getElementById('hudStatFov');
   const hudMinesBadge = document.getElementById('hudMinesBadge');
   const hudSmokeBadge = document.getElementById('hudSmokeBadge');
   const hudArtilleryBadge = document.getElementById('hudArtilleryBadge');
+  const hudBeaconBadge = document.getElementById('hudBeaconBadge');
+  const hudRadarBadge = document.getElementById('hudRadarBadge');
+  const hudGuidedBadge = document.getElementById('hudGuidedBadge');
   const hudActiveSwitchHint = document.getElementById('hudActiveSwitchHint');
   const hudRepairBadge = document.getElementById('hudRepairBadge');
   const hudRebirthBadge = document.getElementById('hudRebirthBadge');
@@ -799,8 +1124,10 @@ export function updateHUD() {
   const hudBadge = document.getElementById('hudPlayerRoleBadge');
 
   if (hudBadge) {
-    hudBadge.textContent = myId === 1 ? '🛡️ ВАШ ТАНК (ГРАВЕЦЬ 1)' : '🛡️ ВАШ ТАНК (ГРАВЕЦЬ 2)';
-    hudBadge.style.color = myId === 1 ? '#f39c12' : '#2ecc71';
+    const myTeam = myTank?.team || playerSlots[myId - 1]?.team || myId;
+    const teamColors = { 1: '#f39c12', 2: '#2ecc71', 3: '#00d2d3', 4: '#e056fd' };
+    hudBadge.textContent = `🛡️ ВАШ ТАНК (ГРАВЕЦЬ ${myId} • К${myTeam})`;
+    hudBadge.style.color = teamColors[myTeam] || '#f39c12';
   }
 
   if (myTank && hudHpText && hudHpFill) {
@@ -809,8 +1136,10 @@ export function updateHUD() {
     const hullArmor = (HULL_TYPES[myTank.hullType] && typeof HULL_TYPES[myTank.hullType].armor === 'number')
       ? HULL_TYPES[myTank.hullType].armor
       : (myTank.hullType === 'heavy' ? 0.30 : (myTank.hullType === 'light' ? 0.10 : 0.20));
-    const armorVal = typeof myTank.armor === 'number' ? myTank.armor : hullArmor;
-    const armorPct = Math.round(armorVal * 100);
+    const effArmor = (typeof myTank.getEffectiveArmor === 'function')
+      ? myTank.getEffectiveArmor(gameState && gameState.map, gameState && gameState.bushes, tileSize)
+      : (typeof myTank.armor === 'number' ? myTank.armor : hullArmor);
+    const armorPct = Math.round(effArmor * 100);
 
     hudHpText.textContent = `HP: ${curHp} / ${maxHp}`;
     if (hudArmorBadge) {
@@ -822,7 +1151,9 @@ export function updateHUD() {
       const curAmmo = Math.max(0, Number(myTank.ammo) || 0);
       const maxAmmo = Math.max(1, Number(myTank.clipSize) || 10);
       if (myTank.isReloadingClip) {
-        const secLeft = Math.max(0.1, ((myTank.clipReloadTimer || 0) / 60)).toFixed(1);
+        const prog = typeof myTank.getReloadProgress === 'function' ? myTank.getReloadProgress() : (myTank.reloadProgress || 0);
+        const remMs = Math.max(0, (1 - prog) * (myTank.clipReloadTime || 3000));
+        const secLeft = Math.max(0.1, remMs / 1000).toFixed(1);
         hudAmmoBadge.textContent = `🔄 Перезарядка: ${secLeft}с (${curAmmo}/${maxAmmo})`;
         hudAmmoBadge.classList.add('reloading');
       } else {
@@ -831,7 +1162,7 @@ export function updateHUD() {
       }
     }
 
-    // Відображення характеристик під HP баром (шкода, скорострільність / інтервал, швидкість танка, швидкість снаряду, кут огляду)
+    // Відображення характеристик під HP баром (шкода, скорострільність / інтервал, розкид, швидкість танка, швидкість снаряду, кут огляду)
     const effMinDmg = typeof myTank.minDmg === 'number'
       ? Math.round(myTank.minDmg)
       : Math.round((typeof myTank.minDamage === 'number' ? myTank.minDamage : 15) + (Number(myTank.damageBonus) || 0));
@@ -852,8 +1183,17 @@ export function updateHUD() {
       const intStr = Number(intervalSec.toFixed(2));
       hudStatFireRate.textContent = `🔥 Скоростр.: ${spsStr}/с (${intStr}с)`;
     }
+    if (hudStatSpread) {
+      const halfSpread = typeof myTank.spreadHalfAngleDeg === 'number' ? myTank.spreadHalfAngleDeg : 2.5;
+      if (myTank.noSpread || halfSpread <= 0) {
+        hudStatSpread.textContent = `🎯 Розкид: 0°`;
+      } else {
+        hudStatSpread.textContent = `🎯 Розкид: ±${Number(halfSpread.toFixed(1))}°`;
+      }
+    }
     if (hudStatSpeed) {
-      const spd = Number(typeof myTank.speed === 'number' ? myTank.speed : 2).toFixed(1).replace(/\.0$/, '');
+      const effSpd = typeof myTank.getEffectiveSpeed === 'function' ? myTank.getEffectiveSpeed() : (myTank.speed || 2);
+      const spd = Number(effSpd).toFixed(1).replace(/\.0$/, '');
       hudStatSpeed.textContent = `⚡ Швидкість: ${spd}`;
     }
     if (hudStatBulletSpeed) {
@@ -886,7 +1226,9 @@ export function updateHUD() {
     if (hudSmokeBadge) {
       if (myTank.hasSmokeScreen) {
         hudSmokeBadge.classList.remove('hidden');
-        if (myTank.smokeCooldownTimer > 0) {
+        if (myTank.smokeActiveTimer > 0) {
+          hudSmokeBadge.textContent = `💨 Дим: АКТИВ (${Math.ceil(myTank.smokeActiveTimer / 60)}с)`;
+        } else if (myTank.smokeCooldownTimer > 0) {
           const secLeft = Math.ceil(myTank.smokeCooldownTimer / 60);
           hudSmokeBadge.textContent = `💨 Дим: ${secLeft}с`;
         } else {
@@ -903,7 +1245,9 @@ export function updateHUD() {
     if (hudArtilleryBadge) {
       if (myTank.hasArtillery) {
         hudArtilleryBadge.classList.remove('hidden');
-        if (myTank.targetingMode === 'artillery') {
+        if (myTank.artilleryPendingTimer > 0) {
+          hudArtilleryBadge.textContent = `🚀 Арта: УДАР (${(myTank.artilleryPendingTimer / 60).toFixed(1)}с)`;
+        } else if (myTank.targetingMode === 'artillery') {
           hudArtilleryBadge.textContent = '🚀 Арта: ЦІЛЬ [ЛКМ]';
         } else if (myTank.artilleryCooldownTimer > 0) {
           const secLeft = Math.ceil(myTank.artilleryCooldownTimer / 60);
@@ -919,12 +1263,76 @@ export function updateHUD() {
       }
     }
 
+    if (hudBeaconBadge) {
+      if (myTank.hasBeaconHeal) {
+        hudBeaconBadge.classList.remove('hidden');
+        if (myTank.beaconActiveTimer > 0) {
+          hudBeaconBadge.textContent = `🚨 Маяк: ЛІКУЄ (${Math.ceil(myTank.beaconActiveTimer / 60)}с)`;
+        } else if (myTank.beaconCooldownTimer > 0) {
+          hudBeaconBadge.textContent = `🚨 Маяк: ${Math.ceil(myTank.beaconCooldownTimer / 60)}с`;
+        } else {
+          hudBeaconBadge.textContent = '🚨 Маяк: ГОТОВО';
+        }
+        if (selectedActive === 'beacon') hudBeaconBadge.classList.add('active-ability-selected');
+        else hudBeaconBadge.classList.remove('active-ability-selected');
+      } else {
+        hudBeaconBadge.classList.add('hidden');
+        hudBeaconBadge.classList.remove('active-ability-selected');
+      }
+    }
+
+    if (hudRadarBadge) {
+      if (myTank.hasSpotEnemy) {
+        hudRadarBadge.classList.remove('hidden');
+        if (myTank.spotActiveTimer > 0) {
+          hudRadarBadge.textContent = `📡 Радар: АКТИВ (${Math.ceil(myTank.spotActiveTimer / 60)}с)`;
+        } else if (myTank.spotCooldownTimer > 0) {
+          hudRadarBadge.textContent = `📡 Радар: ${Math.ceil(myTank.spotCooldownTimer / 60)}с`;
+        } else {
+          hudRadarBadge.textContent = '📡 Радар: ГОТОВО';
+        }
+        if (selectedActive === 'radar') hudRadarBadge.classList.add('active-ability-selected');
+        else hudRadarBadge.classList.remove('active-ability-selected');
+      } else {
+        hudRadarBadge.classList.add('hidden');
+        hudRadarBadge.classList.remove('active-ability-selected');
+      }
+    }
+
+    if (hudGuidedBadge) {
+      if (myTank.hasGuidedBullet) {
+        hudGuidedBadge.classList.remove('hidden');
+        if (myTank.guidedBulletActive) {
+          hudGuidedBadge.textContent = '🎯 Куля: ПОЛІТ';
+        } else if (myTank.guidedBulletArmed) {
+          hudGuidedBadge.textContent = '🎯 Куля: ЗАРЯД [ЛКМ]';
+        } else if (myTank.guidedCooldownTimer > 0) {
+          hudGuidedBadge.textContent = `🎯 Куля: ${Math.ceil(myTank.guidedCooldownTimer / 60)}с`;
+        } else {
+          hudGuidedBadge.textContent = '🎯 Куля: ГОТОВО';
+        }
+        if (selectedActive === 'guided') hudGuidedBadge.classList.add('active-ability-selected');
+        else hudGuidedBadge.classList.remove('active-ability-selected');
+      } else {
+        hudGuidedBadge.classList.add('hidden');
+        hudGuidedBadge.classList.remove('active-ability-selected');
+      }
+    }
+
+
     if (hudActiveSwitchHint) {
       if (hasMultipleActives) {
         hudActiveSwitchHint.classList.remove('hidden');
-        const activeLabel = selectedActive === 'artillery'
-          ? '🚀 Арта'
-          : (selectedActive === 'smoke' ? '💨 Дим' : '💣 Міни');
+        const activeLabelMap = {
+          artillery: '🚀 Арта',
+          smoke: '💨 Дим',
+          beacon: '🚨 Маяк',
+          radar: '📡 Радар',
+          guided: '🎯 Куля',
+          turbo: '🚀 Турбо',
+          mines: '💣 Міни'
+        };
+        const activeLabel = activeLabelMap[selectedActive] || '💣 Міни';
         hudActiveSwitchHint.textContent = `[Q/E] Пробіл: ${activeLabel}`;
       } else {
         hudActiveSwitchHint.classList.add('hidden');
@@ -999,7 +1407,7 @@ export function updateHUD() {
       overlay.classList.remove('hidden');
       const winnerTitle = document.getElementById('winnerTitle');
       const winnerDesc = document.getElementById('winnerDesc');
-      if (gameState.winner === Network.myPlayerId) {
+      const myTeam = myTank ? (myTank.team || myId) : (playerSlots[myId - 1]?.team || myId); if (gameState.winner === Network.myPlayerId || (!gameState.surrenderedBy && gameState.winner === myTeam)) {
         if (winnerTitle) {
           winnerTitle.textContent = '🏆 ПЕРЕМОГА!';
           winnerTitle.style.color = '#2ecc71';
@@ -1064,35 +1472,51 @@ export function setConnectionStatus(status, text) {
 }
 
 export function startActiveMatch(isHost, myPlayerId) {
-  if (gameState) gameState.isTestMode = false;
+  if (gameState) {
+    gameState.isTestMode = false;
+    gameState.isRunning = true;
+    gameState.gameOver = false;
+  }
+  Network.isGuestInLobbySetup = false;
+
   const testPanel = document.getElementById('testModePanel');
   if (testPanel) testPanel.classList.add('hidden');
 
-  document.getElementById('lobbyScreen').classList.add('hidden');
-  document.getElementById('editorScreen').classList.add('hidden');
+  const lobbyScreen = document.getElementById('lobbyScreen');
+  if (lobbyScreen) lobbyScreen.classList.add('hidden');
+  const roomView = document.getElementById('lobbyRoomView');
+  if (roomView) roomView.classList.add('hidden');
+  const guestView = document.getElementById('lobbyGuestView');
+  if (guestView) guestView.classList.add('hidden');
+  const browserView = document.getElementById('lobbyBrowserView');
+  if (browserView) browserView.classList.add('hidden');
+  const initView = document.getElementById('lobbyInitialView');
+  if (initView) initView.classList.add('hidden');
+
+  const editorScreen = document.getElementById('editorScreen');
+  if (editorScreen) editorScreen.classList.add('hidden');
   const mechScreen = document.getElementById('mechanicsScreen');
   if (mechScreen) mechScreen.classList.add('hidden');
-  document.getElementById('gameScreen').classList.remove('hidden');
-  document.getElementById('btnMenu').classList.remove('hidden');
 
-  const isP1 = myPlayerId === 1;
-  const selectH = document.getElementById(isP1 ? 'selectHull' : 'selectGuestHull');
-  const selectT = document.getElementById(isP1 ? 'selectTurret' : 'selectGuestTurret');
-  if (selectH && selectH.value) localLoadout.hull = selectH.value;
-  if (selectT && selectT.value) localLoadout.turret = selectT.value;
+  const gameScreen = document.getElementById('gameScreen');
+  if (gameScreen) gameScreen.classList.remove('hidden');
+  const btnMenu = document.getElementById('btnMenu');
+  if (btnMenu) btnMenu.classList.remove('hidden');
 
-  const remH = document.getElementById('selectRematchHull');
-  const remT = document.getElementById('selectRematchTurret');
-  if (remH) remH.value = localLoadout.hull;
-  if (remT) remT.value = localLoadout.turret;
-
-  if (isP1) {
-    setP1Loadout({ ...localLoadout });
-    if (p1Tank) p1Tank.applyLoadout(p1Loadout.hull, p1Loadout.turret);
-  } else {
-    setP2Loadout({ ...localLoadout });
-    if (p2Tank) p2Tank.applyLoadout(p2Loadout.hull, p2Loadout.turret);
+  const mySlot = playerSlots[myPlayerId - 1] || playerSlots[0];
+  if (mySlot && mySlot.loadout) {
+    localLoadout.hull = mySlot.loadout.hull;
+    localLoadout.turret = mySlot.loadout.turret;
   }
+
+  const allTanks = [p1Tank, p2Tank, p3Tank, p4Tank];
+  playerSlots.forEach((slot, idx) => {
+    const t = allTanks[idx];
+    if (t && slot && slot.type !== 'none' && slot.loadout) {
+      t.applyLoadout(slot.loadout.hull, slot.loadout.turret);
+      t.team = slot.team || (idx + 1);
+    }
+  });
 
   if (Network.connectionActive) {
     Network.sendLoadout(localLoadout);
@@ -1102,23 +1526,34 @@ export function startActiveMatch(isHost, myPlayerId) {
   const labelP2 = document.getElementById('labelP2');
   if (myPlayerId === 1) {
     if (labelP1) labelP1.textContent = 'ТИ (ГРАВЕЦЬ 1)';
-    if (labelP2) labelP2.textContent = 'СУПЕРНИК (ГРАВЕЦЬ 2)';
-  } else {
-    if (labelP1) labelP1.textContent = 'СУПЕРНИК (ГРАВЕЦЬ 1)';
+    if (labelP2) labelP2.textContent = 'ГРАВЕЦЬ 2';
+  } else if (myPlayerId === 2) {
+    if (labelP1) labelP1.textContent = 'ГРАВЕЦЬ 1';
     if (labelP2) labelP2.textContent = 'ТИ (ГРАВЕЦЬ 2)';
+  } else {
+    if (labelP1) labelP1.textContent = 'ГРАВЕЦЬ 1';
+    if (labelP2) labelP2.textContent = `ТИ (ГРАВЕЦЬ ${myPlayerId})`;
   }
 
   // Скидання та валідація кутів веж та вводу при старті бою
-  const initialAngle = myPlayerId === 1 ? Math.PI / 2 : -Math.PI / 2;
-  localInput.turretAngle = initialAngle;
+  const initialAngles = [Math.PI / 2, -Math.PI / 2, Math.PI, 0];
+  localInput.turretAngle = initialAngles[myPlayerId - 1] ?? 0;
   if (p1Tank && !Number.isFinite(p1Tank.turretAngle)) p1Tank.turretAngle = Math.PI / 2;
   if (p2Tank && !Number.isFinite(p2Tank.turretAngle)) p2Tank.turretAngle = -Math.PI / 2;
+  if (p3Tank && !Number.isFinite(p3Tank.turretAngle)) p3Tank.turretAngle = Math.PI;
+  if (p4Tank && !Number.isFinite(p4Tank.turretAngle)) p4Tank.turretAngle = 0;
   if (!Number.isFinite(renderTanks.p1.turretAngle)) renderTanks.p1.turretAngle = Math.PI / 2;
   if (!Number.isFinite(renderTanks.p2.turretAngle)) renderTanks.p2.turretAngle = -Math.PI / 2;
+  if (renderTanks.p3 && !Number.isFinite(renderTanks.p3.turretAngle)) renderTanks.p3.turretAngle = Math.PI;
+  if (renderTanks.p4 && !Number.isFinite(renderTanks.p4.turretAngle)) renderTanks.p4.turretAngle = 0;
 
   const canvas = document.getElementById('gameCanvas');
-  if (canvas) {
+  if (canvas && !canvas._contextMenuBound) { canvas._contextMenuBound = true;
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  if (isHost || !Network.connectionActive) {
+    resetRoundSpawns();
   }
 
   renderMechanicsCatalog();
@@ -1134,8 +1569,16 @@ export function returnToMainMenu() {
   if (typeof Network.disconnect === 'function') {
     Network.disconnect();
   }
+  if (typeof Network.stopLobbyHeartbeat === 'function') {
+    Network.stopLobbyHeartbeat();
+  }
+  if (typeof Network.unsubscribeLobbies === 'function') {
+    Network.unsubscribeLobbies();
+  }
   const lobbyScreen = document.getElementById('lobbyScreen');
   const initView = document.getElementById('lobbyInitialView');
+  const browserView = document.getElementById('lobbyBrowserView');
+  const roomView = document.getElementById('lobbyRoomView');
   const hostView = document.getElementById('lobbyHostView');
   const guestSetupView = document.getElementById('lobbyGuestSetupView');
   const guestView = document.getElementById('lobbyGuestView');
@@ -1148,6 +1591,8 @@ export function returnToMainMenu() {
 
   if (lobbyScreen) lobbyScreen.classList.remove('hidden');
   if (initView) initView.classList.remove('hidden');
+  if (browserView) browserView.classList.add('hidden');
+  if (roomView) roomView.classList.add('hidden');
   if (hostView) hostView.classList.add('hidden');
   if (guestSetupView) guestSetupView.classList.add('hidden');
   if (guestView) guestView.classList.add('hidden');
@@ -1169,6 +1614,13 @@ export function returnToMainMenu() {
  * Оновлення текстових підказок з характеристиками спорядження (включаючи панель реваншу)
  */
 export function updateLoadoutStatsDesc() {
+  const formatTurretSummary = (t) => {
+    if (!t) return '';
+    const halfSpread = typeof t.spreadHalfAngleDeg === 'number' ? t.spreadHalfAngleDeg : 2.5;
+    const spreadStr = (t.noSpread || halfSpread <= 0) ? '0°' : `±${halfSpread}°`;
+    return `${t.description} (Шкода: ${t.minDmg}-${t.maxDmg}, Обойма: ${t.clipSize} постр. / ${(t.clipReloadTime / 1000)}с, Розкид: ${spreadStr}, Огляд: ${t.fov}°)`;
+  };
+
   const selectHull = document.getElementById('selectHull');
   const selectTurret = document.getElementById('selectTurret');
   const hostHullDesc = document.getElementById('hostHullStatsDesc');
@@ -1180,7 +1632,7 @@ export function updateLoadoutStatsDesc() {
   }
   if (selectTurret && hostTurretDesc) {
     const t = TURRET_TYPES[selectTurret.value];
-    if (t) hostTurretDesc.textContent = `${t.description} (Шкода: ${t.minDmg}-${t.maxDmg}, Обойма: ${t.clipSize} постр. / ${(t.clipReloadTime / 1000)}с, Огляд: ${t.fov}°)`;
+    if (t) hostTurretDesc.textContent = formatTurretSummary(t);
   }
 
   const selectGuestHull = document.getElementById('selectGuestHull');
@@ -1194,7 +1646,7 @@ export function updateLoadoutStatsDesc() {
   }
   if (selectGuestTurret && guestTurretDesc) {
     const t = TURRET_TYPES[selectGuestTurret.value];
-    if (t) guestTurretDesc.textContent = `${t.description} (Шкода: ${t.minDmg}-${t.maxDmg}, Обойма: ${t.clipSize} постр. / ${(t.clipReloadTime / 1000)}с, Огляд: ${t.fov}°)`;
+    if (t) guestTurretDesc.textContent = formatTurretSummary(t);
   }
 
   const selectRematchHull = document.getElementById('selectRematchHull');
@@ -1204,35 +1656,346 @@ export function updateLoadoutStatsDesc() {
     const h = HULL_TYPES[selectRematchHull.value] || HULL_TYPES[localLoadout.hull];
     const t = TURRET_TYPES[selectRematchTurret.value] || TURRET_TYPES[localLoadout.turret];
     if (h && t) {
-      rematchDesc.textContent = `${h.name} (${h.maxHp} HP, броня ${Math.round((h.armor || 0.2) * 100)}%, шв. ${h.speed}) • ${t.name} (Шкода ${t.minDmg}-${t.maxDmg}, обойма ${t.clipSize}, огляд ${t.fov}°)`;
+      const halfSpread = typeof t.spreadHalfAngleDeg === 'number' ? t.spreadHalfAngleDeg : 2.5;
+      const spreadStr = (t.noSpread || halfSpread <= 0) ? '0°' : `±${halfSpread}°`;
+      rematchDesc.textContent = `${h.name} (${h.maxHp} HP, броня ${Math.round((h.armor || 0.2) * 100)}%, шв. ${h.speed}) • ${t.name} (Шкода ${t.minDmg}-${t.maxDmg}, обойма ${t.clipSize}, розкид ${spreadStr}, огляд ${t.fov}°)`;
     }
   }
 }
 
 /**
- * Відображення меню вибору спорядження для другого гравця (Guest)
+ * Рендеринг 4 карток слотів у кімнаті лобі (гравці, команди 🟡🟢🔵🟣, вибір спорядження, готовність)
  */
-export function showGuestSetupView(roomId) {
+export function renderLobbySlots() {
+  if (typeof document === 'undefined') return;
+  const grid = document.getElementById('lobbySlotsGrid');
+  if (!grid) return;
+
+  grid.innerHTML = '';
+  const myId = Network.myPlayerId || 1;
+  const isHost = Network.isHost;
+
+  const teamColors = [
+    { team: 1, label: '🟡 1', name: 'Золотий', cls: 'team-1' },
+    { team: 2, label: '🟢 2', name: 'Зелений', cls: 'team-2' },
+    { team: 3, label: '🔵 3', name: 'Бірюзовий', cls: 'team-3' },
+    { team: 4, label: '🟣 4', name: 'Фіолетовий', cls: 'team-4' }
+  ];
+
+  playerSlots.forEach((slot, index) => {
+    const slotId = slot.id || (index + 1);
+    const isMe = (slotId === myId);
+    const card = document.createElement('div');
+    card.className = `lobby-slot-card${slot.type !== 'none' ? ' active' : ''}${isMe ? ' local-slot' : ''}`;
+    card.dataset.slotId = String(slotId);
+
+    if (slot.type === 'none') {
+      card.innerHTML = `
+        <div class="slot-header">
+          <span class="slot-title">Слот ${slotId}</span>
+          <span class="slot-status-pill waiting">ВІЛЬНО</span>
+        </div>
+        <div class="slot-empty-state">
+          <div class="slot-empty-text">⏳ Очікування гравця...</div>
+          <button type="button" class="btn btn-tool btn-add-bot-disabled" disabled title="Скоро! Штучний інтелект у розробці">🤖 + Додати бота (Скоро)</button>
+        </div>
+      `;
+      grid.appendChild(card);
+      return;
+    }
+
+    const titlePrefix = slotId === 1 ? '👑 Хост' : `Гравець ${slotId}`;
+    const meBadge = isMe ? ' <span class="slot-you-tag">(ВИ)</span>' : '';
+    const statusText = slot.isReady ? '✅ ГОТОВИЙ' : '⏳ РОЗДУМУЄ';
+    const statusClass = slot.isReady ? 'ready' : 'waiting';
+
+    const hullName = HULL_TYPES[slot.loadout?.hull]?.name || slot.loadout?.hull || 'Стандартний';
+    const turretName = TURRET_TYPES[slot.loadout?.turret]?.name || slot.loadout?.turret || 'Стандартне';
+
+    card.innerHTML = `
+      <div class="slot-header">
+        <span class="slot-title">${titlePrefix}${meBadge}</span>
+        <span class="slot-status-pill ${statusClass}">${statusText}</span>
+      </div>
+      <div class="slot-team-selector">
+        <span class="slot-field-label">Команда:</span>
+        <div class="team-pill-group">
+          ${teamColors.map(tc => `
+            <button type="button" class="team-pill ${tc.cls} ${slot.team === tc.team ? 'active' : ''}" data-slot="${slotId}" data-team="${tc.team}" ${(!isMe && !isHost) ? 'disabled' : ''}>${tc.label}</button>
+          `).join('')}
+        </div>
+      </div>
+      ${isMe ? `
+        <div class="slot-loadout-row">
+          <div class="slot-loadout-col">
+            <label class="slot-field-label">Корпус:</label>
+            <select class="select-field slot-select-hull" data-slot="${slotId}"></select>
+          </div>
+          <div class="slot-loadout-col">
+            <label class="slot-field-label">Дуло:</label>
+            <select class="select-field slot-select-turret" data-slot="${slotId}"></select>
+          </div>
+        </div>
+      ` : `
+        <div class="slot-loadout-summary">
+          <span>🛡️ ${hullName}</span> • <span>💥 ${turretName}</span>
+        </div>
+      `}
+    `;
+
+    // Bind team buttons
+    const teamPills = card.querySelectorAll('.team-pill');
+    teamPills.forEach(btn => {
+      btn.onclick = () => {
+        const teamNum = Number(btn.dataset.team);
+        if (slot.team !== teamNum) {
+          slot.team = teamNum;
+          if (isHost) {
+            Network.sendLobbyUpdate({
+              playerSlots,
+              teamSettings,
+              map: currentActiveMap,
+              targetScore: MAX_SCORE,
+              gameModes: selectedGameModes
+            });
+          } else if (isMe) {
+            Network.sendSlotUpdate({ team: teamNum });
+          }
+          renderLobbySlots();
+          updateLobbyStartValidation();
+        }
+      };
+    });
+
+    // If local player, populate hull/turret selectors
+    if (isMe) {
+      const selectHull = card.querySelector('.slot-select-hull');
+      const selectTurret = card.querySelector('.slot-select-turret');
+      if (selectHull) {
+        Object.values(HULL_TYPES).forEach(h => {
+          const opt = document.createElement('option');
+          opt.value = h.id;
+          opt.textContent = h.name;
+          selectHull.appendChild(opt);
+        });
+        selectHull.value = slot.loadout?.hull || localLoadout.hull || 'standard';
+        selectHull.onchange = () => {
+          slot.loadout.hull = selectHull.value;
+          localLoadout.hull = selectHull.value;
+          if (slotId === 1) setP1Loadout({ ...slot.loadout });
+          else if (slotId === 2) setP2Loadout({ ...slot.loadout });
+          else if (slotId === 3) setP3Loadout({ ...slot.loadout });
+          else if (slotId === 4) setP4Loadout({ ...slot.loadout });
+          if (isHost) {
+            Network.sendLobbyUpdate({
+              playerSlots,
+              teamSettings,
+              map: currentActiveMap,
+              targetScore: MAX_SCORE,
+              gameModes: selectedGameModes
+            });
+          } else {
+            Network.sendSlotUpdate({ loadout: slot.loadout });
+          }
+          updateLoadoutStatsDesc();
+        };
+      }
+      if (selectTurret) {
+        Object.values(TURRET_TYPES).forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t.id;
+          opt.textContent = t.name;
+          selectTurret.appendChild(opt);
+        });
+        selectTurret.value = slot.loadout?.turret || localLoadout.turret || 'standard';
+        selectTurret.onchange = () => {
+          slot.loadout.turret = selectTurret.value;
+          localLoadout.turret = selectTurret.value;
+          if (slotId === 1) setP1Loadout({ ...slot.loadout });
+          else if (slotId === 2) setP2Loadout({ ...slot.loadout });
+          else if (slotId === 3) setP3Loadout({ ...slot.loadout });
+          else if (slotId === 4) setP4Loadout({ ...slot.loadout });
+          if (isHost) {
+            Network.sendLobbyUpdate({
+              playerSlots,
+              teamSettings,
+              map: currentActiveMap,
+              targetScore: MAX_SCORE,
+              gameModes: selectedGameModes
+            });
+          } else {
+            Network.sendSlotUpdate({ loadout: slot.loadout });
+          }
+          updateLoadoutStatsDesc();
+        };
+      }
+    }
+
+    grid.appendChild(card);
+  });
+
+  updateLobbyStartValidation();
+}
+
+/**
+ * Валідація умов запуску матчу: всі гравці готові, >= 2 команд, на карті достатньо спавнів
+ */
+export function updateLobbyStartValidation() {
+  if (typeof document === 'undefined') return;
+  const btnStart = document.getElementById('btnLobbyStartGame');
+  const btnReady = document.getElementById('btnLobbyToggleReady');
+  const warningEl = document.getElementById('lobbyValidationWarning');
+  const roleBadge = document.getElementById('lobbyRoleBadge');
+
+  const myId = Network.myPlayerId || 1;
+  const isHost = Network.isHost;
+
+  if (roleBadge) {
+    roleBadge.textContent = isHost ? '👑 ХОСТ КІМНАТИ' : `🎮 ГІСТЬ (СЛОТ ${myId})`;
+  }
+
+  const mySlot = playerSlots[myId - 1] || playerSlots[0];
+  if (btnReady && mySlot) {
+    if (mySlot.isReady) {
+      btnReady.textContent = '✅ ВИ ГОТОВІ (СКАСУВАТИ)';
+      btnReady.style.background = '#27ae60';
+    } else {
+      btnReady.textContent = '🟢 ГОТОВИЙ ДО БОЮ';
+      btnReady.style.background = '#2ecc71';
+    }
+  }
+
+  const activeHumanSlots = playerSlots.filter(s => s.type === 'human');
+  const totalActive = activeHumanSlots.length;
+  const allReady = activeHumanSlots.every(s => Boolean(s.isReady));
+  const uniqueTeams = new Set(activeHumanSlots.map(s => s.team));
+  const mapSpawns = countMapSpawns(currentActiveMap);
+
+  const spawnsBadge = document.getElementById('mapSpawnsCountBadge');
+  if (spawnsBadge) {
+    spawnsBadge.textContent = `Спавнів: ${mapSpawns} • Гравців: ${totalActive}`;
+    spawnsBadge.style.color = mapSpawns >= totalActive ? '#2ecc71' : '#e74c3c';
+  }
+
+  if (!isHost) {
+    if (btnStart) {
+      btnStart.disabled = true;
+      btnStart.style.display = 'none';
+    }
+    if (warningEl) {
+      if (!allReady) {
+        warningEl.textContent = '⏳ Очікуємо готовності всіх гравців...';
+      } else {
+        warningEl.textContent = '👑 Всі готові! Очікуємо, поки Хост почне бій...';
+      }
+      warningEl.classList.remove('hidden');
+    }
+    return;
+  }
+
+  if (btnStart) {
+    btnStart.style.display = '';
+  }
+
+  let warning = '';
+  let canStart = true;
+
+  if (totalActive < 2) {
+    warning = '⚠️ Очікуємо підключення другого гравця (мінімум 2 гравці)';
+    canStart = false;
+  } else if (mapSpawns < totalActive) {
+    warning = `⚠️ На цій карті лише ${mapSpawns} спавнів, а гравців ${totalActive}! Оберіть іншу карту`;
+    canStart = false;
+  } else if (uniqueTeams.size < 2) {
+    warning = '⚠️ Потрібно мінімум 2 різні команди (наприклад 1х1, 2х1, 2х2 тощо)';
+    canStart = false;
+  } else if (!allReady) {
+    warning = '⚠️ Очікуємо підтвердження готовності від усіх гравців';
+    canStart = false;
+  }
+
+  if (btnStart) {
+    btnStart.disabled = !canStart;
+  }
+
+  if (warningEl) {
+    if (!canStart && warning) {
+      warningEl.textContent = warning;
+      warningEl.classList.remove('hidden');
+    } else {
+      warningEl.classList.add('hidden');
+    }
+  }
+}
+
+/**
+ * Відображення списку знайдених активних лобі у вкладці "Лобі"
+ */
+export function renderActiveLobbiesList(lobbiesMap) {
+  if (typeof document === 'undefined') return;
+  const container = document.getElementById('activeLobbiesContainer');
+  if (!container) return;
+
+  const lobbies = (Array.isArray(lobbiesMap) ? lobbiesMap : Object.values(lobbiesMap || {}))
+    .filter(l => l && l.roomId && (Date.now() - (l.timestamp || 0) < 25000));
+  if (lobbies.length === 0) {
+    container.innerHTML = '<div class="lobby-empty-placeholder">Активних кімнат не знайдено.<br>Створіть гру (Хост) або запустіть гру в іншій вкладці!</div>';
+    return;
+  }
+
+  container.innerHTML = '';
+  lobbies.forEach(lobby => {
+    const card = document.createElement('div');
+    card.className = 'active-lobby-card';
+    card.innerHTML = `
+      <div class="lobby-card-info">
+        <span class="lobby-card-room-id">ID: <b>${lobby.roomId}</b></span>
+        <span class="lobby-card-map">🗺️ ${lobby.mapName || 'Класична'}</span>
+        <span class="lobby-card-players">👥 ${lobby.playersCount || 1}/${lobby.maxPlayers || 4}</span>
+      </div>
+      <button type="button" class="btn btn-join btn-join-lobby-item" data-room-id="${lobby.roomId}">🔗 Приєднатися</button>
+    `;
+    const btnJoin = card.querySelector('.btn-join-lobby-item');
+    if (btnJoin) {
+      btnJoin.onclick = () => {
+        joinLobbyRoom(lobby.roomId);
+      };
+    }
+    container.appendChild(card);
+  });
+}
+
+/**
+ * Приєднання до знайденої кімнати лобі зі списку
+ */
+export function joinLobbyRoom(roomId) {
+  if (!roomId) return;
+  sound.init();
+  if (gameState) gameState.isTestMode = false;
   pendingRoomId = roomId;
+
+  const browserView = document.getElementById('lobbyBrowserView');
   const initView = document.getElementById('lobbyInitialView');
-  const hostView = document.getElementById('lobbyHostView');
-  const guestSetupView = document.getElementById('lobbyGuestSetupView');
+  const roomView = document.getElementById('lobbyRoomView');
   const guestView = document.getElementById('lobbyGuestView');
-  const guestDisplayRoom = document.getElementById('guestDisplayRoomId');
+  const statusLabel = document.getElementById('guestStatusLabel');
 
+  if (browserView) browserView.classList.add('hidden');
   if (initView) initView.classList.add('hidden');
-  if (hostView) hostView.classList.add('hidden');
-  if (guestView) guestView.classList.add('hidden');
-  if (guestSetupView) guestSetupView.classList.remove('hidden');
-  if (guestDisplayRoom) guestDisplayRoom.textContent = roomId;
+  if (guestView) guestView.classList.remove('hidden');
+  if (roomView) roomView.classList.add('hidden');
+  if (statusLabel) statusLabel.textContent = `Підключення до кімнати ${roomId}...`;
 
-  const selectGuestHull = document.getElementById('selectGuestHull');
-  const selectGuestTurret = document.getElementById('selectGuestTurret');
-  if (selectGuestHull) selectGuestHull.value = localLoadout.hull;
-  if (selectGuestTurret) selectGuestTurret.value = localLoadout.turret;
-  updateHostMapDropdown();
-  updateLoadoutStatsDesc();
-  updateAllMapPreviews();
+  Network.isGuestInLobbySetup = true;
+  Network.joinGame(roomId, { lobbyPreview: true });
+}
+
+/**
+ * Відображення меню кімнати лобі для другого або наступних гравців
+ */
+export function showGuestSetupView(roomIdOrUrl) {
+  const cleanRoomId = Network.extractRoomId(roomIdOrUrl) || roomIdOrUrl;
+  joinLobbyRoom(cleanRoomId);
 }
 
 /**
@@ -1249,6 +2012,7 @@ export function initLoadoutDropdowns() {
   const selectGuestMap = document.getElementById('selectGuestMap');
   const selectRematchMap = document.getElementById('selectRematchMap');
   const selectHostWinScore = document.getElementById('selectHostWinScore');
+  const selectGuestWinScore = document.getElementById('selectGuestWinScore');
   const selectRematchWinScore = document.getElementById('selectRematchWinScore');
 
   const formatWinScoreLabel = (n) => {
@@ -1273,12 +2037,19 @@ export function initLoadoutDropdowns() {
   populateWinScoreSelect(selectHostWinScore, MAX_SCORE, () => {
     if (!selectHostWinScore) return;
     setTargetWinScore(Number(selectHostWinScore.value));
+    if (selectGuestWinScore) selectGuestWinScore.value = String(MAX_SCORE);
     updateHUD();
   });
+
+  if (selectGuestWinScore) {
+    populateWinScoreSelect(selectGuestWinScore, MAX_SCORE, null);
+    selectGuestWinScore.disabled = true;
+  }
 
   populateWinScoreSelect(selectRematchWinScore, MAX_SCORE, () => {
     if (!selectRematchWinScore) return;
     const newTarget = setTargetWinScore(Number(selectRematchWinScore.value));
+    if (selectGuestWinScore) selectGuestWinScore.value = String(newTarget);
     if (Network.connectionActive) {
       Network.sendRematch({
         action: 'winScoreChange',
@@ -1389,17 +2160,10 @@ export function initLoadoutDropdowns() {
   }
 
   if (selectGuestMap) {
-    const onGuestMapChange = () => {
-      const chosenId = selectGuestMap.value;
-      const chosenMap = MapStorage.getMapById(chosenId);
-      if (chosenMap) {
-        if (gameState) gameState.guestSelectedMap = chosenMap;
-        setCurrentActiveMap(chosenMap);
-        renderMapPreview('guestMapPreviewCanvas', chosenMap);
-      }
-    };
-    selectGuestMap.onchange = onGuestMapChange;
-    selectGuestMap.oninput = onGuestMapChange;
+    // У меню підготовки Гостя вибір карти заблоковано (відображається лише карта Хоста та її прев'ю)
+    selectGuestMap.disabled = true;
+    selectGuestMap.onchange = null;
+    selectGuestMap.oninput = null;
   }
 
   if (selectRematchMap) {
@@ -1425,6 +2189,47 @@ export function initLoadoutDropdowns() {
     selectRematchMap.onchange = onRematchMapChange;
     selectRematchMap.oninput = onRematchMapChange;
   }
+
+  // Слухачі галочок вибору режимів (Здібності ↔ Прокляття, Події на карті)
+  const bindModeGroup = (prefix, isRematch = false, isGuest = false) => {
+    const keyToSuffix = {
+      perks: 'Perks',
+      curses: 'Curses',
+      mapEvents: 'MapEvents'
+    };
+    Object.entries(keyToSuffix).forEach(([modeKey, suffix]) => {
+      const el = document.getElementById(`${prefix}${suffix}`);
+      if (!el) return;
+      if (isGuest) {
+        el.disabled = true;
+        el.onchange = null;
+        return;
+      }
+      el.onchange = () => {
+        if (modeKey === 'perks' && !el.checked) {
+          setGameModes({ perks: false, curses: false, coupledTrigger: 'perks' });
+        } else if (modeKey === 'curses' && el.checked) {
+          setGameModes({ perks: true, curses: true, coupledTrigger: 'curses' });
+        } else {
+          setGameModes({ [modeKey]: Boolean(el.checked), coupledTrigger: modeKey });
+        }
+        syncGameModeCheckboxes();
+        if (isRematch && Network.connectionActive) {
+          Network.sendRematch({
+            action: 'gameModesChange',
+            playerId: Network.myPlayerId,
+            gameModes: { ...selectedGameModes }
+          });
+        }
+        updateHUD();
+      };
+    });
+  };
+
+  bindModeGroup('chkHostMode', false, false);
+  bindModeGroup('chkGuestMode', false, true);
+  bindModeGroup('chkRematchMode', true, false);
+  syncGameModeCheckboxes();
 
   updateLoadoutStatsDesc();
   updateAllMapPreviews();
@@ -1488,6 +2293,12 @@ export function initUIEventListeners() {
   if (btnStartTestMode) {
     btnStartTestMode.addEventListener('click', () => {
       sound.init();
+      readGameModeCheckboxes('chkHostMode');
+      const curMap = currentActiveMap || MapStorage.getMapById('default_classic_map');
+      if (selectedGameModes.mapEvents && checkMapPotentialSoftlock(curMap)) {
+        showToast('⚠️ Неможливо запустити Полігон: на цій карті можливий софт-лок при увімкнених подіях («Обман зору»). Вимкніть «Події на карті» або змініть карту!');
+        return;
+      }
       startTestMode();
       showToast('🧪 Полігон активовано! Перемикайте гравців на [Tab] та обирайте здібності.');
     });
@@ -1523,6 +2334,17 @@ export function initUIEventListeners() {
     });
   }
 
+  const selectTestMapEvent = document.getElementById('selectTestMapEvent');
+  if (selectTestMapEvent) {
+    selectTestMapEvent.onchange = () => {
+      const val = selectTestMapEvent.value;
+      const eventId = val === 'none' ? null : val;
+      setMapEvent(eventId, true);
+      const name = eventId ? ((MAP_EVENTS && MAP_EVENTS[eventId] && MAP_EVENTS[eventId].name) || eventId) : 'Без події';
+      showToast(`🌋 Подію встановлено: ${name}`);
+    };
+  }
+
   const btnTestTogglePerks = document.getElementById('btnTestTogglePerks');
   if (btnTestTogglePerks) {
     btnTestTogglePerks.addEventListener('click', () => {
@@ -1536,17 +2358,19 @@ export function initUIEventListeners() {
     });
   }
 
-  const btnTestTargetP1 = document.getElementById('btnTestTargetP1');
-  if (btnTestTargetP1) {
-    btnTestTargetP1.addEventListener('click', () => {
-      setTestTargetPlayer(1);
-    });
-  }
+  [1, 2, 3, 4].forEach(pId => {
+    const btn = document.getElementById(`btnTestTargetP${pId}`);
+    if (btn) {
+      btn.addEventListener('click', () => {
+        setTestTargetPlayer(pId);
+      });
+    }
+  });
 
-  const btnTestTargetP2 = document.getElementById('btnTestTargetP2');
-  if (btnTestTargetP2) {
-    btnTestTargetP2.addEventListener('click', () => {
-      setTestTargetPlayer(2);
+  const selectTestTankCount = document.getElementById('selectTestTankCount');
+  if (selectTestTankCount) {
+    selectTestTankCount.addEventListener('change', () => {
+      startTestMode();
     });
   }
 
@@ -1558,42 +2382,80 @@ export function initUIEventListeners() {
     });
   }
 
+  const btnOpenLobbiesTab = document.getElementById('btnOpenLobbiesTab');
+  if (btnOpenLobbiesTab) {
+    btnOpenLobbiesTab.addEventListener('click', () => {
+      const initView = document.getElementById('lobbyInitialView');
+      const browserView = document.getElementById('lobbyBrowserView');
+      if (initView) initView.classList.add('hidden');
+      if (browserView) browserView.classList.remove('hidden');
+      Network.subscribeLobbies((lobbiesMap) => {
+        renderActiveLobbiesList(lobbiesMap);
+      });
+    });
+  }
+
+  const btnRefreshLobbies = document.getElementById('btnRefreshLobbies');
+  if (btnRefreshLobbies) {
+    btnRefreshLobbies.addEventListener('click', () => {
+      renderActiveLobbiesList(Network.getActiveLobbies ? Network.getActiveLobbies() : {});
+    });
+  }
+
+  const btnBackFromLobbies = document.getElementById('btnBackFromLobbies');
+  if (btnBackFromLobbies) {
+    btnBackFromLobbies.addEventListener('click', () => {
+      sound.init();
+      if (typeof Network.unsubscribeLobbies === 'function') {
+        Network.unsubscribeLobbies();
+      }
+      const browserView = document.getElementById('lobbyBrowserView');
+      const initView = document.getElementById('lobbyInitialView');
+      if (browserView) browserView.classList.add('hidden');
+      if (initView) initView.classList.remove('hidden');
+    });
+  }
+
   const btnHostGame = document.getElementById('btnHostGame');
   if (btnHostGame) {
     btnHostGame.addEventListener('click', () => {
       sound.init();
       if (gameState) gameState.isTestMode = false;
-      const sHull = document.getElementById('selectHull');
-      const sTurret = document.getElementById('selectTurret');
-      const sWinScore = document.getElementById('selectHostWinScore');
-      if (sHull && sHull.value) localLoadout.hull = sHull.value;
-      if (sTurret && sTurret.value) localLoadout.turret = sTurret.value;
-      if (sWinScore && sWinScore.value) setTargetWinScore(Number(sWinScore.value));
-      setP1Loadout({ ...localLoadout });
-      const select = document.getElementById('selectHostMap');
-      const chosenMapId = select ? select.value : null;
-      const chosenMap = MapStorage.getMapById(chosenMapId);
-      setupGameMap(chosenMap);
-      if (p1Tank) p1Tank.applyLoadout(p1Loadout.hull, p1Loadout.turret);
+      readGameModeCheckboxes('chkHostMode');
+
+      Network.myPlayerId = 1;
+      playerSlots[0] = { id: 1, type: 'human', team: 1, loadout: { ...localLoadout }, isReady: true, name: 'Гравець 1 (Хост)' };
+      playerSlots[1] = { id: 2, type: 'none', team: 2, loadout: { hull: 'standard', turret: 'standard' }, isReady: false, name: 'Гравець 2' };
+      playerSlots[2] = { id: 3, type: 'none', team: 3, loadout: { hull: 'standard', turret: 'standard' }, isReady: false, name: 'Гравець 3' };
+      playerSlots[3] = { id: 4, type: 'none', team: 4, loadout: { hull: 'standard', turret: 'standard' }, isReady: false, name: 'Гравець 4' };
+      setPlayerSlots(playerSlots);
 
       const initView = document.getElementById('lobbyInitialView');
-      const hostView = document.getElementById('lobbyHostView');
+      const roomView = document.getElementById('lobbyRoomView');
       if (initView) initView.classList.add('hidden');
-      if (hostView) hostView.classList.remove('hidden');
+      if (roomView) roomView.classList.remove('hidden');
+
+      const select = document.getElementById('selectHostMap');
+      const chosenMapId = select ? select.value : null;
+      const chosenMap = MapStorage.getMapById(chosenMapId) || currentActiveMap || (MapStorage.getMaps() && MapStorage.getMaps()[0]);
+      if (chosenMap) {
+        setCurrentActiveMap(chosenMap);
+      }
+      updateHostMapDropdown(1);
+      renderMapPreview('hostMapPreviewCanvas', currentActiveMap);
+
+      renderLobbySlots();
+      updateLobbyStartValidation();
 
       Network.hostGame((id, inviteUrl) => {
-        const displayRoom = document.getElementById('displayRoomId');
-        const shareLink = document.getElementById('shareLinkInput');
-        if (displayRoom) displayRoom.textContent = id;
-        if (shareLink) shareLink.value = inviteUrl;
+        const roomBadge = document.getElementById('lobbyRoomBadge');
+        if (roomBadge) roomBadge.textContent = `ID: ${id}`;
+        Network.startLobbyHeartbeat(id, () => ({
+          hostName: 'Гравець 1',
+          mapName: currentActiveMap?.name || 'Класична',
+          playersCount: playerSlots.filter(s => s.type !== 'none').length
+        }));
       });
-    });
-  }
-
-  const btnHostBackToMenu = document.getElementById('btnHostBackToMenu');
-  if (btnHostBackToMenu) {
-    btnHostBackToMenu.addEventListener('click', () => {
-      returnToMainMenu();
     });
   }
 
@@ -1604,90 +2466,147 @@ export function initUIEventListeners() {
       const inputVal = input ? input.value : '';
       const roomId = Network.extractRoomId(inputVal);
       if (roomId) {
-        showGuestSetupView(roomId);
+        joinLobbyRoom(roomId);
       } else {
         showToast('Введіть ID кімнати або посилання!');
       }
     });
   }
 
-  const btnGuestReadyJoin = document.getElementById('btnGuestReadyJoin');
-  if (btnGuestReadyJoin) {
-    btnGuestReadyJoin.addEventListener('click', () => {
+  const btnLobbyToggleReady = document.getElementById('btnLobbyToggleReady');
+  if (btnLobbyToggleReady) {
+    btnLobbyToggleReady.addEventListener('click', () => {
       sound.init();
-      if (gameState) gameState.isTestMode = false;
-      const selectGuestHull = document.getElementById('selectGuestHull');
-      const selectGuestTurret = document.getElementById('selectGuestTurret');
-      const selectGuestMap = document.getElementById('selectGuestMap');
-      if (selectGuestHull && selectGuestHull.value) localLoadout.hull = selectGuestHull.value;
-      if (selectGuestTurret && selectGuestTurret.value) localLoadout.turret = selectGuestTurret.value;
-      if (selectGuestMap && selectGuestMap.value) {
-        const chosenMap = MapStorage.getMapById(selectGuestMap.value);
-        if (chosenMap) {
-          if (gameState) gameState.guestSelectedMap = chosenMap;
-          setCurrentActiveMap(chosenMap);
+      const myId = Network.myPlayerId || 1;
+      const mySlot = playerSlots[myId - 1] || playerSlots[0];
+      if (mySlot) {
+        mySlot.isReady = !mySlot.isReady;
+        if (Network.isHost) {
+          Network.sendLobbyUpdate({
+            playerSlots,
+            teamSettings,
+            map: currentActiveMap,
+            targetScore: MAX_SCORE,
+            gameModes: selectedGameModes
+          });
+        } else {
+          Network.sendSlotUpdate({ isReady: mySlot.isReady });
         }
+        renderLobbySlots();
+        updateLobbyStartValidation();
       }
-      setP2Loadout({ ...localLoadout });
-      if (p2Tank) p2Tank.applyLoadout(p2Loadout.hull, p2Loadout.turret);
-
-      const guestSetupView = document.getElementById('lobbyGuestSetupView');
-      const guestView = document.getElementById('lobbyGuestView');
-      const statusLabel = document.getElementById('guestStatusLabel');
-
-      if (guestSetupView) guestSetupView.classList.add('hidden');
-      if (guestView) guestView.classList.remove('hidden');
-      if (statusLabel) statusLabel.textContent = `Підключення до кімнати ${pendingRoomId}...`;
-
-      Network.joinGame(pendingRoomId);
     });
   }
 
-  const btnGuestCancel = document.getElementById('btnGuestCancel');
-  if (btnGuestCancel) {
-    btnGuestCancel.addEventListener('click', () => {
+  const btnLobbyStartGame = document.getElementById('btnLobbyStartGame');
+  if (btnLobbyStartGame) {
+    btnLobbyStartGame.addEventListener('click', () => {
+      if (!Network.isHost) return;
+      sound.init();
+      const activeHumanSlots = playerSlots.filter(s => s.type === 'human');
+      const totalActive = activeHumanSlots.length;
+      const allReady = activeHumanSlots.every(s => Boolean(s.isReady));
+      const uniqueTeams = new Set(activeHumanSlots.map(s => s.team));
+      const mapSpawns = countMapSpawns(currentActiveMap);
+
+      if (totalActive < 2 || mapSpawns < totalActive || uniqueTeams.size < 2 || !allReady) {
+        updateLobbyStartValidation();
+        return;
+      }
+
+      if (selectedGameModes.mapEvents && checkMapPotentialSoftlock(currentActiveMap)) {
+        showToast('⚠️ Неможливо розпочати бій: на цій карті можливий софт-лок при увімкнених подіях («Обман зору»). Вимкніть «Події на карті» або змініть карту!');
+        return;
+      }
+
+      Network.isGuestInLobbySetup = false;
+      setupGameMap(currentActiveMap, playerSlots);
+      startActiveMatch(true, 1);
+      Network.sendRematch({
+        action: 'lobbyGameStart',
+        playerSlots,
+        teamSettings,
+        map: currentActiveMap,
+        targetScore: MAX_SCORE,
+        gameModes: { ...selectedGameModes }
+      });
+    });
+  }
+
+  const btnLeaveLobby = document.getElementById('btnLeaveLobby');
+  if (btnLeaveLobby) {
+    btnLeaveLobby.addEventListener('click', () => {
       returnToMainMenu();
     });
+  }
+
+  const btnCopyLobbyLink = document.getElementById('btnCopyLobbyLink');
+  if (btnCopyLobbyLink) {
+    btnCopyLobbyLink.addEventListener('click', () => {
+      const roomId = Network.currentRoomId || (document.getElementById('lobbyRoomBadge')?.textContent?.replace('ID: ', '')) || '';
+      const fullUrl = `${window.location.origin}${window.location.pathname}?room=${encodeURIComponent(roomId)}`;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(fullUrl).then(() => {
+          showToast('📋 Посилання на лобі скопійовано!');
+        });
+      } else {
+        showToast(`📋 URL: ${fullUrl}`);
+      }
+    });
+  }
+
+  const btnCopyLobbyId = document.getElementById('btnCopyLobbyId');
+  if (btnCopyLobbyId) {
+    btnCopyLobbyId.addEventListener('click', () => {
+      const roomId = Network.currentRoomId || (document.getElementById('lobbyRoomBadge')?.textContent?.replace('ID: ', '')) || '';
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(roomId).then(() => {
+          showToast(`📋 ID кімнати ${roomId} скопійовано!`);
+        });
+      } else {
+        showToast(`📋 ID: ${roomId}`);
+      }
+    });
+  }
+
+  const chkFriendlyFire = document.getElementById('chkFriendlyFire');
+  if (chkFriendlyFire) {
+    chkFriendlyFire.checked = Boolean(teamSettings.friendlyFire);
+    chkFriendlyFire.onchange = () => {
+      setTeamSettings({ friendlyFire: Boolean(chkFriendlyFire.checked) });
+      if (Network.isHost) {
+        Network.sendLobbyUpdate({
+          playerSlots,
+          teamSettings,
+          map: currentActiveMap,
+          targetScore: MAX_SCORE,
+          gameModes: selectedGameModes
+        });
+      }
+    };
+  }
+
+  const chkSharedVision = document.getElementById('chkSharedVision');
+  if (chkSharedVision) {
+    chkSharedVision.checked = Boolean(teamSettings.sharedVision);
+    chkSharedVision.onchange = () => {
+      setTeamSettings({ sharedVision: Boolean(chkSharedVision.checked) });
+      if (Network.isHost) {
+        Network.sendLobbyUpdate({
+          playerSlots,
+          teamSettings,
+          map: currentActiveMap,
+          targetScore: MAX_SCORE,
+          gameModes: selectedGameModes
+        });
+      }
+    };
   }
 
   const btnGuestConnectingCancel = document.getElementById('btnGuestConnectingCancel');
   if (btnGuestConnectingCancel) {
     btnGuestConnectingCancel.addEventListener('click', () => {
       returnToMainMenu();
-    });
-  }
-
-  const btnCopyLink = document.getElementById('btnCopyLink');
-  if (btnCopyLink) {
-    btnCopyLink.addEventListener('click', () => {
-      const shareInput = document.getElementById('shareLinkInput');
-      if (shareInput) {
-        shareInput.select();
-        shareInput.setSelectionRange(0, 99999);
-      }
-      if (navigator.clipboard && navigator.clipboard.writeText && shareInput) {
-        navigator.clipboard.writeText(shareInput.value).then(() => {
-          showToast('📋 Посилання скопійовано в буфер обміну!');
-        });
-      } else {
-        document.execCommand('copy');
-        showToast('📋 Посилання скопійовано в буфер обміну!');
-      }
-    });
-  }
-
-  const btnCopyId = document.getElementById('btnCopyId');
-  if (btnCopyId) {
-    btnCopyId.addEventListener('click', () => {
-      const idElem = document.getElementById('displayRoomId');
-      const idText = idElem ? idElem.textContent : '';
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(idText).then(() => {
-          showToast(`📋 ID ${idText} скопійовано!`);
-        });
-      } else {
-        showToast(`📋 ID: ${idText}`);
-      }
     });
   }
 
@@ -1724,10 +2643,44 @@ export function initUIEventListeners() {
   }
 }
 
+/**
+ * Спливаюче повідомлення (Toast) про готовність перезарядки активної здібності
+ */
+export function showAbilityToast(title, icon = '⚡') {
+  if (typeof document === 'undefined') return;
+  let container = document.getElementById('abilityToastContainer');
+  if (!container) {
+    const wrapper = document.querySelector('.canvas-wrapper') || document.body;
+    container = document.createElement('div');
+    container.id = 'abilityToastContainer';
+    container.className = 'ability-toast-container';
+    wrapper.appendChild(container);
+  }
+  const item = document.createElement('div');
+  item.className = 'ability-toast-item';
+  item.innerHTML = `<span class="ability-toast-icon">${icon}</span> <span class="ability-toast-text">${title}</span>`;
+  container.appendChild(item);
+
+  requestAnimationFrame(() => {
+    item.classList.add('show');
+  });
+
+  setTimeout(() => {
+    item.classList.remove('show');
+    item.classList.add('hide');
+    setTimeout(() => {
+      item.remove();
+    }, 350);
+  }, 2200);
+}
+
 registerUIHooks({
   renderRematchUI,
   renderMechanicsCatalog,
   updateTelemetryUI,
   setConnectionStatus,
-  updateHUD
+  updateHUD,
+  showAbilityToast,
+  renderLobbySlots,
+  updateLobbyStartValidation
 });
