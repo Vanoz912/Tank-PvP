@@ -21,7 +21,11 @@
 
 import {
   MAX_TANK_SPEED, MIN_WIN_SCORE, MAX_WIN_SCORE, LUCK_WEIGHT_MODIFIERS,
-  getRarityWeightWithLuck, PHANTOM_FORBIDDEN_PERKS
+  getRarityWeightWithLuck, PHANTOM_FORBIDDEN_PERKS,
+  GAME_MODES, BASE_CURSE_CHANCE, CURSE_TYPES, PHANTOM_FORBIDDEN_CURSES,
+  BABY_FORBIDDEN_PERKS, BABY_FORBIDDEN_CURSES,
+  SNIPER_FORBIDDEN_PERKS, SNIPER_FORBIDDEN_CURSES,
+  MAP_EVENTS
 } from './config.js?v=20261011_v17';
 import { MapEditor, MapStorage, updateHostMapDropdown, renderMapPreview, updateAllMapPreviews } from './editor.js?v=20261011_v17';
 import Network from './network.js?v=20261011_v17';
@@ -29,30 +33,36 @@ import { sound, SoundFX } from './audio.js?v=20261011_v17';
 import {
   trackMarks, triggerScreenShake, spawnTrackMarks, isTankOnEnemySlowingTrack,
   spawnDebris, spawnMuzzleFlash, spawnSmoke,
+  TracerTrail, tracerTrails, spawnTracerTrail,
   updateParticles as updateParticlesVfx,
   updateExplosions as updateExplosionsVfx
 } from './vfx.js?v=20261011_v17';
 import {
   tileSize, canvasWidth, canvasHeight,
-  MAX_SCORE, setTargetWinScore, p1Tank, p2Tank, localLoadout,
+  MAX_SCORE, setTargetWinScore, selectedGameModes, setGameModes,
+  p1Tank, p2Tank, localLoadout,
   testTargetPlayerId, currentFps, setCurrentFps, gameState, localInput,
   calculateGameDimensions, setupGameMap, restoreMapState,
-  resetRoundSpawns, resetForRematch
+  resetRoundSpawns, resetForRematch, setMapEvent
 } from './state.js?v=20261011_v17';
 import {
   checkLineOfSight, isInVisionCone, isTankInLowBushes,
-  isVisionBlockedByEnemySmoke, canPlayerSeeBullet, canPlayerSeeTrack,
+  isObserverBlindedByLowBushes, isTankInLightHullCamo,
+  isVisionBlockedByEnemySmoke, canPlayerSeeBullet, canPlayerSeeTracer, canPlayerSeeTrack,
   canPlayerSeeMine, canPlayerSeeMuzzleEffect, isTankInSmoke,
-  isTankInBushes, isTankInWaterCamo, isTankCamouflaged,
+  isTankInBushes, isTankInWaterCamo, isTankSniperCamouflaged, isTankCamouflaged,
   shouldDrawTankOverlayHighlight, updatePlayersVisibilityState
 } from './vision.js?v=20261011_v17';
 import {
-  rollPerkOptionsForTank, startPerkSelection, rerollPerkOptions, selectPerk, renderPerkSelectionUI
+  rollPerkOptionsForTank, rollCurseForTank, rollOptionCursesForTank,
+  startPerkSelection, rerollPerkOptions, selectPerk, renderPerkSelectionUI
 } from './perks.js?v=20261011_v17';
 import {
   calculateArmorDamage, checkMapCollision, checkTankCollision, spawnBullet,
-  placeMineForTank, useSmokeForTank, useArtilleryForTank, surrenderMatch,
-  triggerActiveAbilityForTank,
+  placeMineForTank, useSmokeForTank, useArtilleryForTank, executeArtilleryExplosion,
+  executeEnvironmentalArtillery,
+  useBeaconForTank, useSpotEnemyForTank, triggerGuidedBulletForTank, useTurboForTank,
+  surrenderMatch, triggerActiveAbilityForTank, processTankActionInputs,
   cycleActiveForTank, selectActiveForTank, startManualReloadForTank,
   useRepairKitForTank, applyThornsDamage, handleTankKill,
   updateBulletsAndCollisions, updateMinesAndCollisions, updateTankPassives
@@ -64,15 +74,18 @@ import {
 } from './renderer.js?v=20261011_v17';
 import {
   startTestMode, switchTestActivePlayer, setTestTargetPlayer,
-  addTestPerkForPlayer, removeTestPerkForPlayer, clearTestPerksForPlayer,
+  addTestPerkForPlayer, removeTestPerkForPlayer,
+  addTestCurseForPlayer, removeTestCurseForPlayer,
+  clearTestPerksForPlayer,
   healAndResetCooldownsInTestMode, renderTestModeUI
 } from './sandbox.js?v=20261011_v17';
 import {
+  syncGameModeCheckboxes, readGameModeCheckboxes,
   renderRematchUI, requestRematch, renderMechanicsCatalog,
   updateTelemetryUI, renderPerksSidebars, updateHUD,
   setConnectionStatus, startActiveMatch, returnToMainMenu,
   updateLoadoutStatsDesc, showGuestSetupView, initLoadoutDropdowns,
-  initUIEventListeners
+  initUIEventListeners, showAbilityToast
 } from './ui.js?v=20261011_v17';
 import {
   isTypingInTextField, handleKey, onCanvasMouseMove,
@@ -85,22 +98,32 @@ import { hostUpdate, initNetworkCallbacks } from './netSync.js?v=20261011_v17';
 export {
   MAX_TANK_SPEED, MIN_WIN_SCORE, MAX_WIN_SCORE, LUCK_WEIGHT_MODIFIERS,
   getRarityWeightWithLuck, PHANTOM_FORBIDDEN_PERKS,
+  GAME_MODES, BASE_CURSE_CHANCE, CURSE_TYPES, PHANTOM_FORBIDDEN_CURSES,
+  BABY_FORBIDDEN_PERKS, BABY_FORBIDDEN_CURSES,
+  SNIPER_FORBIDDEN_PERKS, SNIPER_FORBIDDEN_CURSES,
+  MAP_EVENTS,
   sound, SoundFX,
   trackMarks, triggerScreenShake, spawnTrackMarks, isTankOnEnemySlowingTrack,
   spawnDebris, spawnMuzzleFlash, spawnSmoke,
-  MAX_SCORE, setTargetWinScore, p1Tank, p2Tank, localLoadout,
+  TracerTrail, tracerTrails, spawnTracerTrail,
+  MAX_SCORE, setTargetWinScore, selectedGameModes, setGameModes,
+  p1Tank, p2Tank, localLoadout,
   testTargetPlayerId, currentFps, gameState, localInput,
   calculateGameDimensions, setupGameMap, restoreMapState,
-  resetRoundSpawns, resetForRematch,
+  resetRoundSpawns, resetForRematch, setMapEvent,
   checkLineOfSight, isInVisionCone, isTankInLowBushes,
-  isVisionBlockedByEnemySmoke, canPlayerSeeBullet, canPlayerSeeTrack,
+  isObserverBlindedByLowBushes, isTankInLightHullCamo,
+  isVisionBlockedByEnemySmoke, canPlayerSeeBullet, canPlayerSeeTracer, canPlayerSeeTrack,
   canPlayerSeeMine, canPlayerSeeMuzzleEffect, isTankInSmoke,
-  isTankInBushes, isTankInWaterCamo, isTankCamouflaged,
+  isTankInBushes, isTankInWaterCamo, isTankSniperCamouflaged, isTankCamouflaged,
   shouldDrawTankOverlayHighlight, updatePlayersVisibilityState,
-  rollPerkOptionsForTank, startPerkSelection, rerollPerkOptions, selectPerk, renderPerkSelectionUI,
+  rollPerkOptionsForTank, rollCurseForTank, rollOptionCursesForTank,
+  startPerkSelection, rerollPerkOptions, selectPerk, renderPerkSelectionUI,
   calculateArmorDamage, checkMapCollision, checkTankCollision, spawnBullet,
-  placeMineForTank, useSmokeForTank, useArtilleryForTank, surrenderMatch,
-  triggerActiveAbilityForTank,
+  placeMineForTank, useSmokeForTank, useArtilleryForTank, executeArtilleryExplosion,
+  executeEnvironmentalArtillery,
+  useBeaconForTank, useSpotEnemyForTank, triggerGuidedBulletForTank, useTurboForTank,
+  surrenderMatch, triggerActiveAbilityForTank, processTankActionInputs,
   cycleActiveForTank, selectActiveForTank, startManualReloadForTank,
   useRepairKitForTank, applyThornsDamage, handleTankKill,
   updateBulletsAndCollisions, updateMinesAndCollisions, updateTankPassives,
@@ -109,13 +132,16 @@ export {
   drawBlockTargetingOverlay, drawRoundTimer, drawGame,
   renderMapPreview, updateAllMapPreviews,
   startTestMode, switchTestActivePlayer, setTestTargetPlayer,
-  addTestPerkForPlayer, removeTestPerkForPlayer, clearTestPerksForPlayer,
+  addTestPerkForPlayer, removeTestPerkForPlayer,
+  addTestCurseForPlayer, removeTestCurseForPlayer,
+  clearTestPerksForPlayer,
   healAndResetCooldownsInTestMode, renderTestModeUI,
+  syncGameModeCheckboxes, readGameModeCheckboxes,
   renderRematchUI, requestRematch, renderMechanicsCatalog,
   updateTelemetryUI, renderPerksSidebars, updateHUD,
   setConnectionStatus, startActiveMatch, returnToMainMenu,
   updateLoadoutStatsDesc, showGuestSetupView, initLoadoutDropdowns,
-  initUIEventListeners,
+  initUIEventListeners, showAbilityToast,
   isTypingInTextField, handleKey, onCanvasMouseMove,
   onCanvasMouseDown, onWindowMouseUp, sendLocalInput,
   resetPointerHoldState, setupMobileControls, initInputListeners,
@@ -128,79 +154,91 @@ export {
 let fpsFrameCount = 0;
 let fpsLastTime = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
 let lastFrameTime = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+let lastRenderTime = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
 const FRAME_DURATION = 1000 / 60;
 let accumulator = 0;
 
 export function gameLoop(now) {
-  const dt = now - lastFrameTime;
-  lastFrameTime = now;
-  accumulator += dt;
+  try {
+    if (!now) now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    const elapsedSinceLastRender = now - lastRenderTime;
 
-  // Підрахунок FPS кожні 500 мс для телеметрії зліва знизу
-  fpsFrameCount++;
-  const elapsedFps = now - fpsLastTime;
-  if (elapsedFps >= 500) {
-    setCurrentFps(Math.max(1, Math.min(240, Math.round((fpsFrameCount * 1000) / elapsedFps))));
-    fpsFrameCount = 0;
-    fpsLastTime = now;
-    updateTelemetryUI(currentFps, Network.pingMs);
-  }
-
-  while (accumulator >= FRAME_DURATION) {
-    if ((Network.isHost && Network.connectionActive) || (gameState && gameState.isTestMode)) {
-      hostUpdate();
-    } else {
-      const isSelectingPerk = Boolean(gameState.perkSelection && gameState.perkSelection.active);
-      if (p1Tank && Network.myPlayerId === 1 && !Network.connectionActive && !gameState.gameOver && !isSelectingPerk) {
-        p1Tank.slowedByEnemyTrack = isTankOnEnemySlowingTrack(p1Tank);
-        p1Tank.update(localInput, null, gameState.map, canvasWidth, canvasHeight, tileSize, checkMapCollision, () => false, {
-          iceGrid: gameState.ice,
-          enemyTrackSlow: p1Tank.slowedByEnemyTrack
-        });
-        if (localInput.reloadClip) {
-          startManualReloadForTank(p1Tank);
-          localInput.reloadClip = false;
-        }
-        if (localInput.useRepair && p1Tank.canUseRepairKit()) {
-          useRepairKitForTank(p1Tank);
-          localInput.useRepair = false;
-        }
-        if (localInput.useSmoke && p1Tank.canUseSmoke()) {
-          useSmokeForTank(p1Tank);
-          localInput.useSmoke = false;
-        }
-        if (localInput.artilleryStrike && p1Tank.canUseArtillery()) {
-          useArtilleryForTank(p1Tank, localInput.artilleryStrike.col, localInput.artilleryStrike.row);
-          localInput.artilleryStrike = null;
-        }
-        if (localInput.placeMine) {
-          triggerActiveAbilityForTank(p1Tank);
-          localInput.placeMine = false;
-        }
-        if (localInput.shoot && p1Tank.canShoot()) {
-          spawnBullet(p1Tank);
-        }
-        updateBulletsAndCollisions();
-        updateMinesAndCollisions();
-        updateTankPassives();
-        updateHUD();
-      } else if (!Network.isHost && Network.connectionActive && (localInput.shoot || localInput.placeMine || localInput.useSmoke || localInput.useRepair || localInput.reloadClip || localInput.artilleryStrike)) {
-        // Підтримка безперервної передачі стану затиснутої стрільби, активок, перезарядки та ремкомплекту для клієнта
-        Network.sendInput(localInput);
-        if (localInput.placeMine) localInput.placeMine = false;
-        if (localInput.useSmoke) localInput.useSmoke = false;
-        if (localInput.useRepair) localInput.useRepair = false;
-        if (localInput.reloadClip) localInput.reloadClip = false;
-        if (localInput.artilleryStrike) localInput.artilleryStrike = null;
-      }
-      updateParticlesVfx(p1Tank, p2Tank, gameState);
-      updateExplosionsVfx(gameState);
+    // Лок/обмеження на 60 FPS для моніторів із високою частотою оновлення (120/144/240 Гц)
+    if (elapsedSinceLastRender < 15.5) {
+      return;
     }
-    accumulator -= FRAME_DURATION;
-  }
+    lastRenderTime = now;
 
-  drawGame();
-  requestAnimationFrame(gameLoop);
+    const dt = now - lastFrameTime;
+    lastFrameTime = now;
+    accumulator += dt;
+
+    // Підрахунок FPS кожні 500 мс для телеметрії зліва знизу
+    fpsFrameCount++;
+    const elapsedFps = now - fpsLastTime;
+    if (elapsedFps >= 500) {
+      setCurrentFps(Math.max(1, Math.min(240, Math.round((fpsFrameCount * 1000) / elapsedFps))));
+      fpsFrameCount = 0;
+      fpsLastTime = now;
+      updateTelemetryUI(currentFps, Network.pingMs);
+    }
+
+    // Запобігання переповненню акумулятора при перемиканні вкладок або затримках
+    if (accumulator > FRAME_DURATION * 10) {
+      accumulator = FRAME_DURATION * 10;
+    }
+
+    while (accumulator >= FRAME_DURATION) {
+      if ((Network.isHost && Network.connectionActive) || (gameState && gameState.isTestMode)) {
+        hostUpdate();
+      } else {
+        const isSelectingPerk = Boolean(gameState.perkSelection && gameState.perkSelection.active);
+        if (p1Tank && Network.myPlayerId === 1 && !Network.connectionActive && !gameState.gameOver && !isSelectingPerk) {
+          p1Tank.slowedByEnemyTrack = isTankOnEnemySlowingTrack(p1Tank);
+          p1Tank.update(localInput, null, gameState.map, canvasWidth, canvasHeight, tileSize, checkMapCollision, () => false, {
+            iceGrid: gameState.ice,
+            enemyTrackSlow: p1Tank.slowedByEnemyTrack,
+            gameState
+          });
+          processTankActionInputs(p1Tank, localInput, true);
+          updateBulletsAndCollisions();
+          updateMinesAndCollisions();
+          updateTankPassives();
+          updateHUD();
+        } else if (!Network.isHost && Network.connectionActive) {
+          const hasActionInput = Boolean(
+            localInput.shoot || localInput.placeMine || localInput.useSmoke ||
+            localInput.useBeacon || localInput.useRadar || localInput.toggleGuided ||
+            localInput.useTurbo || localInput.useRepair || localInput.reloadClip ||
+            localInput.artilleryStrike
+          );
+          const hasMoveInput = Boolean(localInput.up || localInput.down || localInput.left || localInput.right);
+          if (hasActionInput || hasMoveInput) {
+            // Підтримка безперервної передачі стану руху, затиснутої стрільби, активок, перезарядки та ремкомплекту для клієнта
+            Network.sendInput(localInput);
+          }
+          if (localInput.placeMine) localInput.placeMine = false;
+          if (localInput.useSmoke) localInput.useSmoke = false;
+          if (localInput.useBeacon) localInput.useBeacon = false;
+          if (localInput.useRadar) localInput.useRadar = false;
+          if (localInput.toggleGuided) localInput.toggleGuided = false;
+          if (localInput.useTurbo) localInput.useTurbo = false;
+          if (localInput.useRepair) localInput.useRepair = false;
+          if (localInput.reloadClip) localInput.reloadClip = false;
+          if (localInput.artilleryStrike) localInput.artilleryStrike = null;
+        }
+        updateParticlesVfx(p1Tank, p2Tank, gameState);
+        updateExplosionsVfx(gameState);
+      }
+      accumulator -= FRAME_DURATION;
+    }
+
+    drawGame();
+  } catch (loopError) {
+    console.error('Помилка в ігровому циклі gameLoop:', loopError);
+  } finally {
+    requestAnimationFrame(gameLoop);
+  }
 }
 
 export function initApp() {
