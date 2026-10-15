@@ -69,29 +69,39 @@ export class Explosion {
  * Чіткий, контрастний слід протектора та втисненої колії від гусениць танка
  */
 export class TreadMark {
-  constructor(x, y, angle, width = 6, length = 5.5, ownerId = 0, invisibleToEnemy = false, bonusLifeFrames = 0, slowsEnemy = false) {
+  constructor(x, y, angle, width = 6, length = 5.5, ownerId = 0, invisibleToEnemy = false, bonusLifeFrames = 0, slowsEnemy = false, options = {}) {
     this.x = x;
     this.y = y;
     this.angle = angle;
     this.width = width;
     this.length = length;
     this.ownerId = ownerId;
-    this.invisibleToEnemy = Boolean(invisibleToEnemy);
+    this.invisibleToEnemy = Boolean(options && options.forceVisible ? false : invisibleToEnemy);
     this.bonusLifeFrames = Math.max(0, Number(bonusLifeFrames) || 0);
     this.slowsEnemy = Boolean(slowsEnemy);
-    this.life = 240 + this.bonusLifeFrames; // ~4 секунди + бонус (+0.25с = +15 кадрів за дублікат)
-    this.maxLife = this.life;
+    this.isPermanent = Boolean(options && options.permanent);
+    if (this.isPermanent) {
+      this.life = Infinity;
+      this.maxLife = Infinity;
+    } else if (options && options.isSnow) {
+      this.life = (240 + this.bonusLifeFrames) * 2; // на снігу сліди тримаються в 2 рази довше
+      this.maxLife = this.life;
+    } else {
+      this.life = 240 + this.bonusLifeFrames; // ~4 секунди + бонус
+      this.maxLife = this.life;
+    }
   }
 
   update() {
+    if (this.isPermanent) return false;
     this.life--;
     return this.life <= 0;
   }
 
   draw(ctx) {
-    const progress = this.life / this.maxLife;
+    const progress = this.isPermanent ? 1 : (this.life / this.maxLife);
     // Плавне згасання з високою видимою початковою яскравістю
-    const alpha = Math.min(1, progress * 1.35);
+    const alpha = this.isPermanent ? 0.90 : Math.min(1, progress * 1.35);
     if (alpha <= 0.01) return;
 
     ctx.save();
@@ -341,6 +351,54 @@ export class SmokeParticle {
   }
 }
 
+/**
+ * Трасуючий слід снайперської кулі (TracerTrail)
+ * Залишає яскраву лінію трасера від дула до точки влучання, яка поступово зникає
+ */
+export class TracerTrail {
+  constructor(x1, y1, x2, y2, ownerId = 0, hiddenFromEnemy = false) {
+    this.x1 = x1;
+    this.y1 = y1;
+    this.x2 = x2;
+    this.y2 = y2;
+    this.ownerId = ownerId;
+    this.hiddenFromEnemy = Boolean(hiddenFromEnemy);
+    this.life = 72; // подвоєний час існування трасера (~1.2с плавного згасання)
+    this.maxLife = 72;
+  }
+
+  update() {
+    this.life--;
+    return this.life <= 0;
+  }
+
+  draw(ctx) {
+    const progress = Math.max(0, this.life / this.maxLife);
+    if (progress <= 0.01) return;
+
+    ctx.save();
+    ctx.lineCap = 'round';
+
+    // Зовнішнє світіння трасера
+    ctx.strokeStyle = `rgba(255, 118, 117, ${progress * 0.48})`;
+    ctx.lineWidth = 4.5 * progress + 1;
+    ctx.beginPath();
+    ctx.moveTo(this.x1, this.y1);
+    ctx.lineTo(this.x2, this.y2);
+    ctx.stroke();
+
+    // Яскраве ядро трасера
+    ctx.strokeStyle = `rgba(255, 234, 167, ${Math.min(1, progress * 1.15)})`;
+    ctx.lineWidth = Math.max(1, 2.2 * progress);
+    ctx.beginPath();
+    ctx.moveTo(this.x1, this.y1);
+    ctx.lineTo(this.x2, this.y2);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+}
+
 // =========================================================================
 // МЕНЕДЖЕР ЧАСТИНОК ТА ТРЯСКИ ЕКРАНА (PARTICLE SYSTEM & SCREEN SHAKE)
 // =========================================================================
@@ -348,19 +406,20 @@ export let trackMarks = [];
 export let debrisParticles = [];
 export let muzzleFlashes = [];
 export let smokeParticles = [];
+export let tracerTrails = [];
 
 export let screenShakeTime = 0;
 export let screenShakeIntensity = 0;
 
 export let lastP1Pos = { x: 0, y: 0, angle: 0 };
-export let lastP2Pos = { x: 0, y: 0, angle: 0 };
+export let lastP2Pos = { x: 0, y: 0, angle: 0 }; export let lastP3Pos = { x: 0, y: 0, angle: 0 }; export let lastP4Pos = { x: 0, y: 0, angle: 0 };
 
 export function setLastTankPos(playerId, x, y, angle) {
   if (playerId === 1) {
     lastP1Pos.x = x;
     lastP1Pos.y = y;
     lastP1Pos.angle = angle;
-  } else if (playerId === 2) {
+  } else if (playerId === 3) { lastP3Pos.x = x; lastP3Pos.y = y; lastP3Pos.angle = angle; } else if (playerId === 4) { lastP4Pos.x = x; lastP4Pos.y = y; lastP4Pos.angle = angle; } else if (playerId === 2) {
     lastP2Pos.x = x;
     lastP2Pos.y = y;
     lastP2Pos.angle = angle;
@@ -372,6 +431,7 @@ export function clearVfxState() {
   debrisParticles.length = 0;
   muzzleFlashes.length = 0;
   smokeParticles.length = 0;
+  tracerTrails.length = 0;
 }
 
 export function triggerScreenShake(intensity = 6, duration = 12) {
@@ -389,13 +449,14 @@ export function consumeScreenShake(ctx) {
   }
 }
 
-export function spawnTrackMarks(tank) {
+export function spawnTrackMarks(tank, mapGrid = null, tileSize = 40, currentMapEvent = null) {
   if (!tank || tank.isDead) return;
 
   // Точна ширина та відступ гусениць за типом корпусу
   let treadW = 6;
   if (tank.hullType === 'heavy') treadW = 8;
   else if (tank.hullType === 'light') treadW = 5;
+  else if (tank.hullType === 'baby') treadW = 3.5;
 
   const treadSpacing = (tank.size - treadW) * 0.42;
   const cx = tank.x + tank.size / 2;
@@ -406,13 +467,50 @@ export function spawnTrackMarks(tank) {
   const bonusFrames = Number(tank.trackLifeBonusFrames) || 0;
   const slowsEnemy = Boolean(tank.hasSlowingTracks);
 
-  // Слід лівої та правої гусениці (з прив'язкою до ID власника, часу життя та сповільнення ворога)
-  trackMarks.push(new TreadMark(cx + perpX * treadSpacing, cy + perpY * treadSpacing, tank.bodyAngle, treadW, 5.5, tank.id, invTracks, bonusFrames, slowsEnemy));
-  trackMarks.push(new TreadMark(cx - perpX * treadSpacing, cy - perpY * treadSpacing, tank.bodyAngle, treadW, 5.5, tank.id, invTracks, bonusFrames, slowsEnemy));
+  const col = Math.floor(cx / Math.max(1, tileSize));
+  const row = Math.floor(cy / Math.max(1, tileSize));
+  const tileId = (mapGrid && mapGrid[row]) ? mapGrid[row][col] : 0;
+  const isSnowStorm = currentMapEvent === 'snow_storm';
+  const isSnowTile = tileId === 14;
+  const isWaterTile = (tileId === 3 || tileId === 8);
+  if (isWaterTile && !isSnowStorm) {
+    return;
+  }
 
-  // Оптимальний буфер слідів гусениць (до 800 слідів для тривалих маршрутів)
-  if (trackMarks.length > 800) {
-    trackMarks.splice(0, trackMarks.length - 800);
+  const markOpts = {
+    permanent: isSnowStorm,
+    forceVisible: isSnowStorm, // невидимі сліди не працюють при сніговому штормі
+    isSnow: isSnowStorm || isSnowTile
+  };
+
+  const leftX = cx + perpX * treadSpacing;
+  const leftY = cy + perpY * treadSpacing;
+  const rightX = cx - perpX * treadSpacing;
+  const rightY = cy - perpY * treadSpacing;
+
+  const leftCol = Math.floor(leftX / Math.max(1, tileSize));
+  const leftRow = Math.floor(leftY / Math.max(1, tileSize));
+  const leftTileId = (mapGrid && mapGrid[leftRow]) ? mapGrid[leftRow][leftCol] : 0;
+  const isLeftWater = (leftTileId === 3 || leftTileId === 8) && !isSnowStorm;
+
+  const rightCol = Math.floor(rightX / Math.max(1, tileSize));
+  const rightRow = Math.floor(rightY / Math.max(1, tileSize));
+  const rightTileId = (mapGrid && mapGrid[rightRow]) ? mapGrid[rightRow][rightCol] : 0;
+  const isRightWater = (rightTileId === 3 || rightTileId === 8) && !isSnowStorm;
+
+  // Слід лівої та правої гусениці (у воді сліди НЕ залишаються!)
+  const treadLen = tank.hullType === 'baby' ? 3.5 : 5.5;
+  if (!isLeftWater) {
+    trackMarks.push(new TreadMark(leftX, leftY, tank.bodyAngle, treadW, treadLen, tank.id, invTracks, bonusFrames, slowsEnemy, markOpts));
+  }
+  if (!isRightWater) {
+    trackMarks.push(new TreadMark(rightX, rightY, tank.bodyAngle, treadW, treadLen, tank.id, invTracks, bonusFrames, slowsEnemy, markOpts));
+  }
+
+  // Оптимальний буфер слідів гусениць (до 3000 при сніговому штормі для збереження до кінця раунду)
+  const maxTracks = isSnowStorm ? 3000 : 800;
+  if (trackMarks.length > maxTracks) {
+    trackMarks.splice(0, trackMarks.length - maxTracks);
   }
 }
 
@@ -423,7 +521,7 @@ export function isTankOnEnemySlowingTrack(tank, tracks = trackMarks) {
   if (!tank || tank.isDead || !Array.isArray(tracks) || tracks.length === 0) return false;
   const cx = tank.x + tank.size / 2;
   const cy = tank.y + tank.size / 2;
-  const hitRadius = Math.max(12, tank.size * 0.58);
+  const hitRadius = Math.max(10, tank.size * 0.58);
 
   for (let i = tracks.length - 1; i >= 0; i--) {
     const t = tracks[i];
@@ -437,12 +535,16 @@ export function isTankOnEnemySlowingTrack(tank, tracks = trackMarks) {
   return false;
 }
 
-export function updateTankTrackSpawning(p1Tank, p2Tank) {
+export function updateTankTrackSpawning(p1Tank, p2Tank, gameState = null) {
+  const mapGrid = gameState?.map || null;
+  const tSize = gameState?.tileSize || 40;
+  const curEvent = gameState?.currentMapEvent || null;
+
   if (p1Tank && !p1Tank.isDead) {
     const distP1 = Math.hypot(p1Tank.x - lastP1Pos.x, p1Tank.y - lastP1Pos.y);
     const dAngleP1 = Math.abs(p1Tank.bodyAngle - lastP1Pos.angle);
     if (distP1 >= 3.4 || dAngleP1 >= 0.075) {
-      spawnTrackMarks(p1Tank);
+      spawnTrackMarks(p1Tank, mapGrid, tSize, curEvent);
       lastP1Pos.x = p1Tank.x;
       lastP1Pos.y = p1Tank.y;
       lastP1Pos.angle = p1Tank.bodyAngle;
@@ -453,7 +555,7 @@ export function updateTankTrackSpawning(p1Tank, p2Tank) {
     const distP2 = Math.hypot(p2Tank.x - lastP2Pos.x, p2Tank.y - lastP2Pos.y);
     const dAngleP2 = Math.abs(p2Tank.bodyAngle - lastP2Pos.angle);
     if (distP2 >= 3.4 || dAngleP2 >= 0.075) {
-      spawnTrackMarks(p2Tank);
+      spawnTrackMarks(p2Tank, mapGrid, tSize, curEvent);
       lastP2Pos.x = p2Tank.x;
       lastP2Pos.y = p2Tank.y;
       lastP2Pos.angle = p2Tank.bodyAngle;
@@ -477,6 +579,10 @@ export function spawnSmoke(x, y, angle, ownerId = 0, hiddenFromEnemy = false) {
   }
 }
 
+export function spawnTracerTrail(x1, y1, x2, y2, ownerId = 0, hiddenFromEnemy = false) {
+  tracerTrails.push(new TracerTrail(x1, y1, x2, y2, ownerId, hiddenFromEnemy));
+}
+
 export function addExplosion(gameState, x, y, radius, isTankExplosion = false) {
   if (gameState && Array.isArray(gameState.explosions)) {
     gameState.explosions.push(new Explosion(x, y, radius, isTankExplosion));
@@ -484,7 +590,7 @@ export function addExplosion(gameState, x, y, radius, isTankExplosion = false) {
 }
 
 export function updateParticles(p1Tank, p2Tank, gameState) {
-  updateTankTrackSpawning(p1Tank, p2Tank);
+  updateTankTrackSpawning(p1Tank, p2Tank, gameState);
 
   for (let i = trackMarks.length - 1; i >= 0; i--) {
     if (trackMarks[i].update()) trackMarks.splice(i, 1);
@@ -498,10 +604,83 @@ export function updateParticles(p1Tank, p2Tank, gameState) {
   for (let i = smokeParticles.length - 1; i >= 0; i--) {
     if (smokeParticles[i].update()) smokeParticles.splice(i, 1);
   }
+  for (let i = tracerTrails.length - 1; i >= 0; i--) {
+    if (tracerTrails[i].update()) tracerTrails.splice(i, 1);
+  }
   if (gameState && Array.isArray(gameState.smokeClouds)) {
     for (let i = gameState.smokeClouds.length - 1; i >= 0; i--) {
       if (gameState.smokeClouds[i].update()) gameState.smokeClouds.splice(i, 1);
     }
+  }
+
+  updateWeatherParticles(gameState, gameState?.canvasWidth || 640, gameState?.canvasHeight || 640);
+}
+
+export let weatherParticles = [];
+
+export function updateWeatherParticles(gameState, width = 640, height = 640) {
+  if (!gameState || !gameState.currentMapEvent) {
+    if (weatherParticles.length > 0) weatherParticles.length = 0;
+    return;
+  }
+  const event = gameState.currentMapEvent;
+  if (event !== 'acid_rain' && event !== 'snow_storm') {
+    if (weatherParticles.length > 0) weatherParticles.length = 0;
+    return;
+  }
+
+  const targetCount = event === 'acid_rain' ? 70 : 85;
+  while (weatherParticles.length < targetCount) {
+    weatherParticles.push({
+      x: Math.random() * (width + 100) - 50,
+      y: Math.random() * height - 20,
+      speed: event === 'acid_rain' ? (7 + Math.random() * 5) : (1.2 + Math.random() * 1.8),
+      size: event === 'acid_rain' ? (10 + Math.random() * 8) : (1.8 + Math.random() * 2.2),
+      drift: event === 'acid_rain' ? (1.4 + Math.random() * 1.0) : (Math.random() * 0.8 - 0.4),
+      alpha: 0.35 + Math.random() * 0.45
+    });
+  }
+
+  for (let i = weatherParticles.length - 1; i >= 0; i--) {
+    const p = weatherParticles[i];
+    p.y += p.speed;
+    p.x += p.drift;
+    if (p.y > height + 20 || p.x > width + 60 || p.x < -60) {
+      p.y = -15;
+      p.x = Math.random() * (width + 100) - 50;
+    }
+  }
+}
+
+export function drawWeatherEffects(ctx, gameState, width = 640, height = 640) {
+  if (!ctx || !gameState || !gameState.currentMapEvent) return;
+  const event = gameState.currentMapEvent;
+  if (event === 'acid_rain') {
+    ctx.save();
+    ctx.strokeStyle = '#2ecc71';
+    ctx.lineWidth = 1.4;
+    for (const p of weatherParticles) {
+      ctx.globalAlpha = p.alpha;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x + p.drift * 2, p.y + p.size);
+      ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(46, 204, 113, 0.05)';
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
+  } else if (event === 'snow_storm') {
+    ctx.save();
+    ctx.fillStyle = '#ffffff';
+    for (const p of weatherParticles) {
+      ctx.globalAlpha = p.alpha;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(223, 249, 251, 0.04)';
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
   }
 }
 
