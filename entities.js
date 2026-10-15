@@ -10,13 +10,20 @@
 import {
   WIN_SCORE,
   MAX_TANK_SPEED,
+  BASE_CURSE_CHANCE,
   HULL_TYPES,
   PHANTOM_FORBIDDEN_PERKS,
+  PHANTOM_FORBIDDEN_CURSES,
+  BABY_FORBIDDEN_PERKS,
+  BABY_FORBIDDEN_CURSES,
+  SNIPER_FORBIDDEN_PERKS,
+  SNIPER_FORBIDDEN_CURSES,
   TURRET_TYPES,
   PERK_RARITIES,
   LUCK_WEIGHT_MODIFIERS,
   getRarityWeightWithLuck,
-  PERK_TYPES
+  PERK_TYPES,
+  CURSE_TYPES
 } from './config.js?v=20261011_v17';
 import {
   drawSingleTread,
@@ -29,25 +36,35 @@ import {
   SmokeCloud,
   DebrisParticle,
   MuzzleFlash,
-  SmokeParticle
+  SmokeParticle,
+  TracerTrail
 } from './vfx.js?v=20261011_v17';
+import { getEffectiveTileId, isCellEffectiveHighBush, getEffectiveCellTile } from './tiles.js?v=20261011_v17';
 
 export {
   WIN_SCORE,
   MAX_TANK_SPEED,
+  BASE_CURSE_CHANCE,
   HULL_TYPES,
   PHANTOM_FORBIDDEN_PERKS,
+  PHANTOM_FORBIDDEN_CURSES,
+  BABY_FORBIDDEN_PERKS,
+  BABY_FORBIDDEN_CURSES,
+  SNIPER_FORBIDDEN_PERKS,
+  SNIPER_FORBIDDEN_CURSES,
   TURRET_TYPES,
   PERK_RARITIES,
   LUCK_WEIGHT_MODIFIERS,
   getRarityWeightWithLuck,
   PERK_TYPES,
+  CURSE_TYPES,
   Explosion,
   TreadMark,
   SmokeCloud,
   DebrisParticle,
   MuzzleFlash,
-  SmokeParticle
+  SmokeParticle,
+  TracerTrail
 };
 
 export const DIRS = [
@@ -58,7 +75,7 @@ export const DIRS = [
 ];
 
 /**
- * Клас бойового танка з незалежним обертанням корпусу та вежі, системою касет та післяраундових бонусів (Perks)
+ * Клас бойового танка з незалежним обертанням корпусу та вежі, системою касет та післяраундових бонусів (Perks & Curses)
  */
 export class Tank {
   /**
@@ -74,19 +91,38 @@ export class Tank {
     this.y = y;
     this.vx = 0;
     this.vy = 0;
-    this.size = options.size || 26;
+    this.baseSize = options.size || 26;
+    this.size = this.baseSize;
+    this.sizeScale = 1.0;
 
     // Кути в радіанах (роздільне керування)
     this.bodyAngle = initialAngle;
     this.turretAngle = initialAngle;
 
-    // Масив отриманих за матч післяраундових бонусів (скидається при Реванші)
+    // Масив отриманих за матч післяраундових бонусів та проклять (скидається при Реванші)
     this.acquiredPerks = [];
+    this.acquiredCurses = [];
     this.regenTimer = 0;
     this.proximityTimer = 0;
     this.lingerTimer = 0;
     this.smokeCooldownTimer = 0;
+    this.smokeActiveTimer = 0;
     this.artilleryCooldownTimer = 0;
+    this.artilleryPendingTimer = 0;
+    this.beaconCooldownTimer = 0;
+    this.beaconActiveTimer = 0;
+    this.beaconHealTickTimer = 0;
+    this.beaconStacks = 0;
+    this.beaconHealStacks = 0;
+    this.spotCooldownTimer = 0;
+    this.spotActiveTimer = 0;
+    this.guidedCooldownTimer = 0;
+    this.guidedBulletArmed = false;
+    this.guidedBulletActive = false;
+    this.turboCooldownTimer = 0;
+    this.turboActiveTimer = 0;
+    this.sniperStealthTimer = 0;
+    this.blindTimer = 0;
     this.targetingMode = null;
     this.hitInvulnTimer = 0;
     this.roundTimeDmgBonus = 0;
@@ -97,6 +133,7 @@ export class Tank {
     // Конфігурація корпусу та вежі
     this.hullType = options.hull || 'standard';
     this.turretType = options.turret || 'standard';
+    this.roundsLost = 0;
 
     this.applyLoadout(this.hullType, this.turretType);
 
@@ -120,17 +157,26 @@ export class Tank {
     this.isMoving = false;
     this.trackTimer = 0;
 
-    // Візуальні кольори
+    // Команда та візуальні кольори (підтримка команд 1, 2, 3, 4)
+    this.team = Number(options.team) || id;
     this.isP1 = id === 1;
-    this.baseColor = this.isP1 ? '#f39c12' : '#2ecc71';
-    this.lightColor = this.isP1 ? '#f1c40f' : '#27ae60';
-    this.darkColor = this.isP1 ? '#b7791f' : '#1e824c';
+
+    const teamColors = {
+      1: { base: '#f39c12', light: '#f1c40f', dark: '#b7791f' }, // Команда 1 (Золотий / Жовтий)
+      2: { base: '#27ae60', light: '#2ecc71', dark: '#1e824c' }, // Команда 2 (Смарагдовий / Зелений)
+      3: { base: '#00cec9', light: '#00d2d3', dark: '#0984e3' }, // Команда 3 (Ціан / Синій)
+      4: { base: '#8e44ad', light: '#e056fd', dark: '#6c5ce7' }  // Команда 4 (Фіолетовий)
+    };
+    const cTheme = teamColors[this.team] || (id === 1 ? teamColors[1] : teamColors[2]);
+    this.baseColor = cTheme.base;
+    this.lightColor = cTheme.light;
+    this.darkColor = cTheme.dark;
   }
 
   /**
-   * Застосування характеристик обраного спорядження з урахуванням усіх накопичених бонусів (acquiredPerks)
+   * Застосування характеристик обраного спорядження з урахуванням усіх накопичених бонусів (acquiredPerks) та проклять (acquiredCurses)
    */
-  applyLoadout(hullId, turretId) {
+  applyLoadout(hullId, turretId, customRoundsLost = null) {
     const hullConfig = HULL_TYPES[hullId] || HULL_TYPES.standard;
     const turretConfig = TURRET_TYPES[turretId] || TURRET_TYPES.standard;
 
@@ -146,10 +192,38 @@ export class Tank {
     if (!Array.isArray(this.acquiredPerks)) {
       this.acquiredPerks = [];
     }
+    if (!Array.isArray(this.acquiredCurses)) {
+      this.acquiredCurses = [];
+    }
 
-    // Якщо обрано корпус з 1 HP та 99% броні (phantom), прибираємо заборонені для нього перки на HP/Броню/Реген/Ремкомплект
-    if (hullConfig.blockHpAndArmorPerks && Array.isArray(this.acquiredPerks) && this.acquiredPerks.length > 0) {
-      this.acquiredPerks = this.acquiredPerks.filter(id => !PHANTOM_FORBIDDEN_PERKS.includes(id));
+    // Якщо обрано корпус з 1 HP та 95% броні (phantom), прибираємо заборонені для нього перки та прокляття на HP/Броню/Реген/Ремкомплект
+    if (hullConfig.blockHpAndArmorPerks) {
+      if (this.acquiredPerks.length > 0) {
+        this.acquiredPerks = this.acquiredPerks.filter(id => !PHANTOM_FORBIDDEN_PERKS.includes(id));
+      }
+      if (this.acquiredCurses.length > 0) {
+        this.acquiredCurses = this.acquiredCurses.filter(id => !PHANTOM_FORBIDDEN_CURSES.includes(id));
+      }
+    }
+
+    // Якщо обрано корпус «Малюк» (baby), прибираємо перки/прокляття, що впливають на розмір
+    if (hullConfig.blockSizePerks) {
+      if (this.acquiredPerks.length > 0) {
+        this.acquiredPerks = this.acquiredPerks.filter(id => !BABY_FORBIDDEN_PERKS.includes(id));
+      }
+      if (this.acquiredCurses.length > 0) {
+        this.acquiredCurses = this.acquiredCurses.filter(id => !BABY_FORBIDDEN_CURSES.includes(id));
+      }
+    }
+
+    // Якщо обрано башту «Снайпер» (sniper), прибираємо перки/прокляття на кут огляду та розкид
+    if (turretConfig.fixedFov || turretConfig.noSpread) {
+      if (this.acquiredPerks.length > 0) {
+        this.acquiredPerks = this.acquiredPerks.filter(id => !SNIPER_FORBIDDEN_PERKS.includes(id));
+      }
+      if (this.acquiredCurses.length > 0) {
+        this.acquiredCurses = this.acquiredCurses.filter(id => !SNIPER_FORBIDDEN_CURSES.includes(id));
+      }
     }
 
     // Підрахунок бонусів від обраних здібностей (Perks)
@@ -165,6 +239,7 @@ export class Tank {
     let bonusBulletPierce = 0;
     let bonusRicochet = 0;
     let bonusArmor = 0;
+    let bonusSpreadHalfAngle = 0;
     let regenAmount = 0;
     let proximityDmg = 0;
     let ignoreArmor = false;
@@ -173,7 +248,10 @@ export class Tank {
     let invisibleTracks = false;
     let hasThorns = false;
     let maxRepairKits = 0;
-    let ignoreShallowWater = false;
+    let ignoreShallowWater = Boolean(hullConfig.ignoreShallowWater);
+    let seeInLowBush = Boolean(hullConfig.seeInLowBush);
+    let camoInLowBushAndShallowWater = Boolean(hullConfig.camoInLowBushAndShallowWater);
+    let coverArmorBonus = typeof hullConfig.coverArmorBonus === 'number' ? hullConfig.coverArmorBonus : 0;
     let hasLingerVision = false;
     let maxMines = 0;
     let hasWaterCamo = false;
@@ -189,10 +267,21 @@ export class Tank {
     let hasSmokeScreen = false;
     let hasTimeScalingMaxDmg = false;
     let hasArtillery = false;
+    let hasShrinkTank20 = false;
+    let beaconStacks = 0;
+    let hasSpotEnemy = false;
+    let hasGuidedBullet = false;
+    let hasTurboBoost = false;
+    let hasVampiricShot = false;
+    let hasMagneticBullets = false;
+    let blindBulletStacks = 0;
+    let curseResistStacks = 0;
     let picksPerRound = 1;
     const customPerkHooks = [];
 
-    const ammoPerStack = turretConfig.id === 'heavy' ? 1 : (turretConfig.id === 'rapid' ? 3 : 2);
+    const ammoPerStack = (turretConfig.id === 'heavy' || turretConfig.id === 'sniper')
+      ? 1
+      : (turretConfig.id === 'rapid' ? 3 : 2);
 
     for (const perkId of this.acquiredPerks) {
       if (perkId === 'hp_plus_10') bonusMaxHp += 10;
@@ -201,6 +290,8 @@ export class Tank {
       else if (perkId === 'ammo_plus') bonusClipSize += ammoPerStack;
       else if (perkId === 'reload_minus_02') bonusReloadReduction += 200;
       else if (perkId === 'fire_rate_plus_02') bonusFireRate = +(bonusFireRate + 0.2).toFixed(2);
+      else if (perkId === 'curse_chance_minus_25') curseResistStacks = Math.min(2, curseResistStacks + 1);
+      else if (perkId === 'blind_bullet_chance') blindBulletStacks = Math.min(10, blindBulletStacks + 1);
       else if (perkId === 'max_dmg_plus_7') bonusMaxDmg += 7;
       else if (perkId === 'instant_break_obstacles') instantBreakObstacles = true;
       else if (perkId === 'invisible_bullets') invisibleBullets = true;
@@ -222,11 +313,19 @@ export class Tank {
       else if (perkId === 'luck_plus_1') luckStacks += 1;
       else if (perkId === 'slowing_tracks') { hasSlowingTracks = true; trackLifeBonusFrames += 15; }
       else if (perkId === 'time_scaling_max_dmg') hasTimeScalingMaxDmg = true;
+      else if (perkId === 'shrink_tank_20') hasShrinkTank20 = true;
+      else if (perkId === 'beacon_heal') beaconStacks += 1;
+      else if (perkId === 'turbo_boost') hasTurboBoost = true;
+      else if (perkId === 'spread_minus_05') bonusSpreadHalfAngle = +(bonusSpreadHalfAngle - 0.5).toFixed(2);
       else if (perkId === 'mines_plus_3') maxMines += 3;
       else if (perkId === 'armor_plus_15') bonusArmor = +(bonusArmor + 0.15).toFixed(2);
       else if (perkId === 'water_camouflage') hasWaterCamo = true;
       else if (perkId === 'smoke_screen') hasSmokeScreen = true;
       else if (perkId === 'artillery_strike') hasArtillery = true;
+      else if (perkId === 'spot_enemy_10s') hasSpotEnemy = true;
+      else if (perkId === 'guided_bullet') hasGuidedBullet = true;
+      else if (perkId === 'magnetic_bullets') hasMagneticBullets = true;
+      else if (perkId === 'vampiric_shot') hasVampiricShot = true;
       else if (perkId === 'walk_deep_water') canWalkDeepWater = true;
       else if (perkId === 'rebirth_plus_1') maxRebirths += 1;
       else if (perkId === 'wallhack_vision') hasWallhack = true;
@@ -278,28 +377,68 @@ export class Tank {
       }
     }
 
+    // Підрахунок штрафів від отриманих проклять (acquiredCurses)
+    let hasCurseSizePlus10 = false;
+    for (const curseId of this.acquiredCurses) {
+      if (curseId === 'curse_size_plus_10') hasCurseSizePlus10 = true;
+      else if (curseId === 'curse_speed_minus_01') bonusSpeed = +(bonusSpeed - 0.2).toFixed(2);
+      else if (curseId === 'curse_fov_minus_10') bonusFov -= 10;
+      else if (curseId === 'curse_hp_minus_10') bonusMaxHp -= 10;
+      else if (curseId === 'curse_fire_rate_minus_015') bonusFireRate = +(bonusFireRate - 0.15).toFixed(2);
+      else if (curseId === 'curse_armor_minus_5') bonusArmor = +(bonusArmor - 0.05).toFixed(2);
+      else if (curseId === 'curse_spread_plus_05') bonusSpreadHalfAngle = +(bonusSpreadHalfAngle + 0.5).toFixed(2);
+    }
+
+    // Масштабування фізичного та візуального розміру танка (-50% для Малюка, -20% від shrink_tank_20, +10% від curse_size_plus_10)
+    let sizeScale = typeof hullConfig.baseSizeScale === 'number' ? hullConfig.baseSizeScale : 1.0;
+    if (!hullConfig.blockSizePerks) {
+      if (hasShrinkTank20) sizeScale -= 0.20;
+      if (hasCurseSizePlus10) sizeScale += 0.10;
+    }
+    this.sizeScale = +sizeScale.toFixed(2);
+    this.hasShrinkTank20 = Boolean(!hullConfig.blockSizePerks && hasShrinkTank20);
+    this.hasCurseSizePlus10 = Boolean(!hullConfig.blockSizePerks && hasCurseSizePlus10);
+    this.blockSizePerks = Boolean(hullConfig.blockSizePerks);
+    const baseTankSize = this.baseSize || 26;
+    this.size = Math.max(8, Math.round(baseTankSize * this.sizeScale));
+
     // Характеристики корпусу + бонуси (максимальна можлива швидкість = MAX_TANK_SPEED = 5)
     this.unpierceableArmor = Boolean(hullConfig.unpierceableArmor);
     this.blockHpAndArmorPerks = Boolean(hullConfig.blockHpAndArmorPerks);
+    this.seeInLowBush = seeInLowBush || Boolean(hullConfig.seeInLowBush);
+    this.camoInLowBush = Boolean(hullConfig.camoInLowBush);
+    this.camoInLowBushAndShallowWater = camoInLowBushAndShallowWater;
+    this.coverArmorBonus = coverArmorBonus;
+    this.curseResistStacks = curseResistStacks;
+    this.curseChanceReduction = +(curseResistStacks * 0.05).toFixed(3);
 
     if (hullConfig.blockHpAndArmorPerks) {
       this.maxHp = hullConfig.maxHp; // Строго 1 HP
       this.hp = (!hadHp || prevHull !== hullConfig.id || (typeof prevMaxHp === 'number' && this.hp >= prevMaxHp))
         ? this.maxHp
         : Math.min(this.hp, this.maxHp);
-      this.armor = typeof hullConfig.armor === 'number' ? hullConfig.armor : 0.99; // 99% броні
+      this.armor = typeof hullConfig.armor === 'number' ? hullConfig.armor : 0.95;
     } else {
-      this.maxHp = hullConfig.maxHp + bonusMaxHp;
+      let comebackHp = 0;
+      if (hullConfig.id === 'wooden') {
+        const roundsLost = (typeof customRoundsLost === 'number')
+          ? customRoundsLost
+          : (typeof this.roundsLost === 'number'
+            ? this.roundsLost
+            : 0);
+        comebackHp = roundsLost * (hullConfig.lostRoundHpBonus || 10);
+      }
+      this.maxHp = Math.max(10, hullConfig.maxHp + bonusMaxHp + comebackHp);
       if (!hadHp || prevHull !== hullConfig.id || (typeof prevMaxHp === 'number' && this.hp >= prevMaxHp)) {
         this.hp = this.maxHp;
       } else {
         this.hp = Math.min(this.hp, this.maxHp);
       }
-      const defaultArmorByHull = hullConfig.id === 'heavy' ? 0.30 : (hullConfig.id === 'light' ? 0.10 : 0.20);
+      const defaultArmorByHull = hullConfig.id === 'heavy' ? 0.30 : (hullConfig.id === 'light' ? 0.10 : (hullConfig.id === 'baby' ? 0.05 : (hullConfig.id === 'wooden' ? 0.0 : 0.20)));
       const baseArmor = typeof hullConfig.armor === 'number' ? hullConfig.armor : defaultArmorByHull;
-      this.armor = Math.min(0.90, +(baseArmor + bonusArmor).toFixed(2));
+      this.armor = Math.max(0, Math.min(0.90, +(baseArmor + bonusArmor).toFixed(2)));
     }
-    this.speed = Math.min(MAX_TANK_SPEED, +(hullConfig.speed + bonusSpeed).toFixed(2));
+    this.speed = Math.max(0.4, Math.min(MAX_TANK_SPEED, +(hullConfig.speed + bonusSpeed).toFixed(2)));
     this.rotateSpeed = hullConfig.rotateSpeed;
 
     // Характеристики дула та касети + бонуси
@@ -311,15 +450,19 @@ export class Tank {
     }
     this.maxDmg = this.baseMaxDmg + (hasTimeScalingMaxDmg ? (this.roundTimeDmgBonus || 0) : 0);
     this.bulletSpeed = +(turretConfig.bulletSpeed + bonusBulletSpeed).toFixed(2);
+    this.isTracer = Boolean(turretConfig.isTracer);
+    if (this.turretType !== 'sniper') {
+      this.sniperStealthTimer = 0;
+    }
 
     const baseFireRate = 1000 / (turretConfig.reloadTime || 650);
-    const effectiveFireRate = +(baseFireRate + bonusFireRate).toFixed(2);
+    const effectiveFireRate = Math.max(0.15, +(baseFireRate + bonusFireRate).toFixed(2));
     this.fireRate = effectiveFireRate;
-    this.reloadTime = bonusFireRate > 0
+    this.reloadTime = Math.abs(bonusFireRate) > 0.001
       ? Math.max(50, Math.round(1000 / effectiveFireRate))
       : turretConfig.reloadTime;
-    const baseClipSize = turretConfig.clipSize || (turretConfig.id === 'heavy' ? 5 : (turretConfig.id === 'rapid' ? 15 : 10));
-    const baseClipReloadTime = turretConfig.clipReloadTime || (turretConfig.id === 'heavy' ? 2000 : (turretConfig.id === 'rapid' ? 4000 : 3000));
+    const baseClipSize = turretConfig.clipSize || (turretConfig.id === 'heavy' || turretConfig.id === 'sniper' ? 5 : (turretConfig.id === 'rapid' ? 15 : 10));
+    const baseClipReloadTime = turretConfig.clipReloadTime || (turretConfig.id === 'heavy' ? 2000 : (turretConfig.id === 'rapid' || turretConfig.id === 'sniper' ? 4000 : 3000));
 
     this.clipSize = baseClipSize + bonusClipSize;
     this.clipReloadTime = Math.max(1000, baseClipReloadTime - bonusReloadReduction);
@@ -332,7 +475,19 @@ export class Tank {
     } else {
       this.ammo = Math.min(this.ammo, this.clipSize);
     }
-    this.fov = Math.min(360, (turretConfig.fov || 90) + bonusFov);
+
+    this.fixedFov = Boolean(turretConfig.fixedFov);
+    this.fov = this.fixedFov
+      ? (turretConfig.fov || 35)
+      : Math.max(15, Math.min(360, (turretConfig.fov || 90) + bonusFov));
+    this.fovDeg = this.fov;
+
+    this.noSpread = Boolean(turretConfig.noSpread);
+    const baseSpreadHalf = typeof turretConfig.spreadHalfAngleDeg === 'number' ? turretConfig.spreadHalfAngleDeg : 2.5;
+    this.spreadHalfAngleDeg = this.noSpread
+      ? 0
+      : Math.max(0, +(baseSpreadHalf + bonusSpreadHalfAngle).toFixed(2));
+    this.spreadDeg = +(this.spreadHalfAngleDeg * 2).toFixed(2);
 
     // Бонусні бойові властивості (враховуючи базове пробиття важкого дула та базовий рикошет дула «Рикошет»)
     this.bulletPierce = (turretConfig.bulletPierce || 0) + bonusBulletPierce;
@@ -378,6 +533,25 @@ export class Tank {
     if (!hasArtillery && this.targetingMode === 'artillery') {
       this.targetingMode = null;
     }
+    this.beaconStacks = beaconStacks;
+    this.beaconHealStacks = beaconStacks;
+    this.hasBeaconHeal = beaconStacks > 0;
+    this.hasSpotEnemy = hasSpotEnemy;
+    this.hasGuidedBullet = hasGuidedBullet;
+    if (!hasGuidedBullet) {
+      this.guidedBulletArmed = false;
+      this.guidedBulletActive = false;
+    }
+    this.hasTurboBoost = hasTurboBoost;
+    if (!hasTurboBoost) {
+      this.turboActiveTimer = 0;
+      this.turboCooldownTimer = 0;
+    }
+    this.blindBulletStacks = blindBulletStacks;
+    this.blindBulletChance = +(blindBulletStacks * 0.02).toFixed(2);
+    this.blindChance = this.blindBulletChance;
+    this.hasVampiricShot = hasVampiricShot;
+    this.hasMagneticBullets = hasMagneticBullets;
     this.picksPerRound = picksPerRound;
 
     this.ensureValidSelectedActive();
@@ -388,19 +562,32 @@ export class Tank {
   }
 
   /**
-   * Список доступних активних здібностей на ПРОБІЛ ('mines', 'smoke', 'artillery')
+   * Список доступних активних здібностей на ПРОБІЛ ('mines', 'smoke', 'artillery', 'beacon', 'radar', 'guided', 'turbo')
    */
   getAvailableActives() {
     const list = [];
     if ((this.maxMines || 0) > 0) list.push('mines');
     if (this.hasSmokeScreen) list.push('smoke');
     if (this.hasArtillery) list.push('artillery');
+    if (this.hasBeaconHeal) list.push('beacon');
+    if (this.hasSpotEnemy) list.push('radar');
+    if (this.hasGuidedBullet) list.push('guided');
+    if (this.hasTurboBoost) list.push('turbo');
     return list;
   }
 
   /**
    * Забезпечення коректно обраної активної здібності на ПРОБІЛ
    */
+  getEffectiveCurseChance() {
+    return Math.max(0, +(BASE_CURSE_CHANCE - (this.curseChanceReduction || 0)).toFixed(3));
+  }
+
+  getEffectiveSpeed() {
+    const mult = (this.turboActiveTimer || 0) > 0 ? 1.5 : 1;
+    return Math.min(MAX_TANK_SPEED, +(this.speed * mult).toFixed(2));
+  }
+
   ensureValidSelectedActive() {
     const avail = this.getAvailableActives();
     if (avail.length === 0) {
@@ -437,7 +624,7 @@ export class Tank {
   }
 
   /**
-   * Прямий вибір активної здібності на ПРОБІЛ ('mines', 'smoke' або 'artillery')
+   * Прямий вибір активної здібності на ПРОБІЛ ('mines', 'smoke', 'artillery', 'beacon', 'radar', 'guided', 'turbo')
    */
   setSelectedActive(activeKey) {
     const avail = this.getAvailableActives();
@@ -459,15 +646,16 @@ export class Tank {
   canUseSmoke() {
     if (this.isDead) return false;
     if (!this.hasSmokeScreen) return false;
-    return (this.smokeCooldownTimer || 0) <= 0;
+    return (this.smokeCooldownTimer || 0) <= 0 && (this.smokeActiveTimer || 0) <= 0;
   }
 
   /**
-   * Активація димової завіси (перезарядка 30 секунд = 1800 кадрів при 60 FPS)
+   * Активація димової завіси (5 секунд дії = 300 кадрів, після чого перезарядка 30 секунд = 1800 кадрів)
    */
   triggerSmoke() {
     if (!this.canUseSmoke()) return false;
-    this.smokeCooldownTimer = 1800;
+    this.smokeActiveTimer = 300;
+    this.smokeCooldownTimer = 0;
     return true;
   }
 
@@ -477,16 +665,128 @@ export class Tank {
   canUseArtillery() {
     if (this.isDead) return false;
     if (!this.hasArtillery) return false;
-    return (this.artilleryCooldownTimer || 0) <= 0;
+    return (this.artilleryCooldownTimer || 0) <= 0 && (this.artilleryPendingTimer || 0) <= 0;
   }
 
   /**
-   * Активація перезарядки артилерії (35 секунд = 2100 кадрів при 60 FPS)
+   * Запуск 1-секундного очікування перед ударом артилерії після кліку ЛКМ по блоку (60 кадрів)
+   */
+  triggerArtilleryPending() {
+    if (!this.canUseArtillery()) return false;
+    this.artilleryPendingTimer = 60;
+    this.artilleryCooldownTimer = 0;
+    this.targetingMode = null;
+    return true;
+  }
+
+  /**
+   * Завершення артилерійського удару і старт перезарядки (35 секунд = 2100 кадрів при 60 FPS)
    */
   triggerArtillery() {
-    if (!this.canUseArtillery()) return false;
+    if (!this.hasArtillery) return false;
+    this.artilleryPendingTimer = 0;
     this.artilleryCooldownTimer = 2100;
     this.targetingMode = null;
+    return true;
+  }
+
+  /**
+   * Перевірка готовності Маяка Регенерації (beacon_heal)
+   */
+  canUseBeacon() {
+    if (this.isDead) return false;
+    if (!this.hasBeaconHeal || (this.beaconStacks || 0) <= 0) return false;
+    return (this.beaconCooldownTimer || 0) <= 0 && (this.beaconActiveTimer || 0) <= 0;
+  }
+
+  /**
+   * Активація Маяка Регенерації (7 секунд дії = 420 кадрів, після чого КД 20 секунд = 1200 кадрів)
+   */
+  triggerBeacon() {
+    if (!this.canUseBeacon()) return false;
+    this.beaconActiveTimer = 420;
+    this.beaconHealTickTimer = 0;
+    this.beaconCooldownTimer = 0;
+    return true;
+  }
+
+  /**
+   * Перевірка готовності Радара Розвідки (spot_enemy_10s)
+   */
+  canUseSpotEnemy() {
+    if (this.isDead) return false;
+    if (!this.hasSpotEnemy) return false;
+    return (this.spotCooldownTimer || 0) <= 0 && (this.spotActiveTimer || 0) <= 0;
+  }
+
+  /**
+   * Активація Радара Розвідки (10 секунд дії = 600 кадрів, після чого КД 40 секунд = 2400 кадрів)
+   */
+  triggerSpotEnemy() {
+    if (!this.canUseSpotEnemy()) return false;
+    this.spotActiveTimer = 600;
+    this.spotCooldownTimer = 0;
+    return true;
+  }
+
+  /**
+   * Перевірка готовності Керованого Снаряда (guided_bullet)
+   */
+  canUseGuidedBullet() {
+    if (this.isDead) return false;
+    if (!this.hasGuidedBullet) return false;
+    return (this.guidedCooldownTimer || 0) <= 0 && !this.guidedBulletActive;
+  }
+
+  /**
+   * Увімкнення/вимкнення режиму керованого снаряда для наступного пострілу ЛКМ
+   */
+  toggleGuidedBulletArm() {
+    if (this.isDead || !this.canUseGuidedBullet()) {
+      this.guidedBulletArmed = false;
+      return false;
+    }
+    this.guidedBulletArmed = !this.guidedBulletArmed;
+    return this.guidedBulletArmed;
+  }
+
+  /**
+   * Споживання бафу керованого снаряда при пострілі ЛКМ (КД 45 секунд = 2700 кадрів почнеться після знищення кулі)
+   */
+  consumeGuidedBulletOnShot() {
+    if (!this.guidedBulletArmed || !this.canUseGuidedBullet()) return false;
+    this.guidedBulletArmed = false;
+    this.guidedBulletActive = true;
+    this.guidedCooldownTimer = 0;
+    return true;
+  }
+
+  /**
+   * Коли керована куля знищується (влучає в стіну/ворога/кулю або вилітає за межі), починається КД 45 секунд (2700 кадрів)
+   */
+  onGuidedBulletDestroyed() {
+    if (this.guidedBulletActive) {
+      this.guidedBulletActive = false;
+      this.guidedCooldownTimer = 2700;
+    }
+  }
+
+  /**
+   * Перевірка готовності Турбо-прискорення (turbo_boost)
+   */
+  canUseTurbo() {
+    if (this.isDead) return false;
+    if (!this.hasTurboBoost) return false;
+    return (this.turboCooldownTimer || 0) <= 0 && (this.turboActiveTimer || 0) <= 0;
+  }
+
+  /**
+   * Активація Турбо (+50% швидкості на 5 секунд = 300 кадрів, після чого КД 25 секунд = 1500 кадрів)
+   */
+  triggerTurbo() {
+    if (!this.canUseTurbo()) return false;
+    this.turboActiveTimer = 240; // 4 секунди при 60 FPS
+    this.turboCooldownTimer = 0;
     return true;
   }
 
@@ -528,7 +828,14 @@ export class Tank {
   applyPerk(perkId, options = {}) {
     if (!perkId || !PERK_TYPES[perkId]) return false;
     const hullConfig = HULL_TYPES[this.hullType] || HULL_TYPES.standard;
+    const turretConfig = TURRET_TYPES[this.turretType] || TURRET_TYPES.standard;
     if (hullConfig && hullConfig.blockHpAndArmorPerks && PHANTOM_FORBIDDEN_PERKS.includes(perkId)) {
+      return false;
+    }
+    if (hullConfig && hullConfig.blockSizePerks && BABY_FORBIDDEN_PERKS.includes(perkId)) {
+      return false;
+    }
+    if (turretConfig && (turretConfig.fixedFov || turretConfig.noSpread) && SNIPER_FORBIDDEN_PERKS.includes(perkId)) {
       return false;
     }
     const perkDef = PERK_TYPES[perkId];
@@ -570,11 +877,80 @@ export class Tank {
     }
     if (perkId === 'smoke_screen') {
       this.smokeCooldownTimer = 0;
+      this.smokeActiveTimer = 0;
       this.ensureValidSelectedActive();
     }
     if (perkId === 'artillery_strike') {
       this.artilleryCooldownTimer = 0;
+      this.artilleryPendingTimer = 0;
       this.ensureValidSelectedActive();
+    }
+    if (perkId === 'beacon_heal') {
+      this.beaconCooldownTimer = 0;
+      this.ensureValidSelectedActive();
+    }
+    if (perkId === 'spot_enemy_10s') {
+      this.spotCooldownTimer = 0;
+      this.spotActiveTimer = 0;
+      this.ensureValidSelectedActive();
+    }
+    if (perkId === 'guided_bullet') {
+      this.guidedCooldownTimer = 0;
+      this.guidedBulletActive = false;
+      this.ensureValidSelectedActive();
+    }
+    if (perkId === 'turbo_boost') {
+      this.turboCooldownTimer = 0;
+      this.turboActiveTimer = 0;
+      this.ensureValidSelectedActive();
+    }
+    return true;
+  }
+
+  /**
+   * Накладання прокляття (Curse) на танк
+   */
+  applyCurse(curseId) {
+    if (!curseId || !CURSE_TYPES[curseId]) return false;
+    const hullConfig = HULL_TYPES[this.hullType] || HULL_TYPES.standard;
+    const turretConfig = TURRET_TYPES[this.turretType] || TURRET_TYPES.standard;
+    if (hullConfig && hullConfig.blockHpAndArmorPerks && PHANTOM_FORBIDDEN_CURSES.includes(curseId)) {
+      return false;
+    }
+    if (hullConfig && hullConfig.blockSizePerks && BABY_FORBIDDEN_CURSES.includes(curseId)) {
+      return false;
+    }
+    if (turretConfig && (turretConfig.fixedFov || turretConfig.noSpread) && SNIPER_FORBIDDEN_CURSES.includes(curseId)) {
+      return false;
+    }
+    const curseDef = CURSE_TYPES[curseId];
+    if (!Array.isArray(this.acquiredCurses)) this.acquiredCurses = [];
+    const currentCount = this.acquiredCurses.filter(id => id === curseId).length;
+    if (!curseDef.stackable && currentCount >= 1) {
+      return false;
+    }
+
+    this.acquiredCurses.push(curseId);
+    this.applyLoadout(this.hullType, this.turretType);
+    this.hp = Math.min(this.hp, this.maxHp);
+    return true;
+  }
+
+  /**
+   * Видалення 1 стаку прокляття (для Зони тестування / Полігону)
+   */
+  removeCurse(curseId) {
+    if (!curseId || !Array.isArray(this.acquiredCurses)) return false;
+    const idx = this.acquiredCurses.lastIndexOf(curseId);
+    if (idx === -1) return false;
+
+    this.acquiredCurses.splice(idx, 1);
+    const prevMaxHp = this.maxHp;
+    this.applyLoadout(this.hullType, this.turretType);
+    if (this.maxHp > prevMaxHp) {
+      this.hp = Math.min(this.maxHp, this.hp + (this.maxHp - prevMaxHp));
+    } else {
+      this.hp = Math.min(this.hp, this.maxHp);
     }
     return true;
   }
@@ -598,12 +974,32 @@ export class Tank {
     this.rerollsLeft = Math.min(this.rerollsLeft || 0, this.maxRerolls || 0);
     if (!this.hasSmokeScreen) {
       this.smokeCooldownTimer = 0;
+      this.smokeActiveTimer = 0;
     }
     if (!this.hasArtillery) {
       this.artilleryCooldownTimer = 0;
+      this.artilleryPendingTimer = 0;
       if (this.targetingMode === 'artillery') {
         this.targetingMode = null;
       }
+    }
+    if (!this.hasBeaconHeal) {
+      this.beaconCooldownTimer = 0;
+      this.beaconActiveTimer = 0;
+      this.beaconHealTickTimer = 0;
+    }
+    if (!this.hasSpotEnemy) {
+      this.spotCooldownTimer = 0;
+      this.spotActiveTimer = 0;
+    }
+    if (!this.hasGuidedBullet) {
+      this.guidedCooldownTimer = 0;
+      this.guidedBulletArmed = false;
+      this.guidedBulletActive = false;
+    }
+    if (!this.hasTurboBoost) {
+      this.turboCooldownTimer = 0;
+      this.turboActiveTimer = 0;
     }
     if (this.localSelectedActive && !this.getAvailableActives().includes(this.localSelectedActive)) {
       this.localSelectedActive = null;
@@ -613,16 +1009,31 @@ export class Tank {
   }
 
   /**
-   * Повне скидання всіх накопичених бонусів (викликається при натисканні «Реванш» або «Скинути» на полігоні)
+   * Повне скидання всіх накопичених бонусів та проклять (викликається при натисканні «Реванш» або «Скинути» на полігоні)
    */
   resetPerks() {
     this.acquiredPerks = [];
+    this.acquiredCurses = [];
     this.regenTimer = 0;
     this.proximityTimer = 0;
     this.lingerTimer = 0;
     this.smokeCooldownTimer = 0;
+    this.smokeActiveTimer = 0;
     this.artilleryCooldownTimer = 0;
+    this.artilleryPendingTimer = 0;
     this.targetingMode = null;
+    this.beaconCooldownTimer = 0;
+    this.beaconActiveTimer = 0;
+    this.beaconHealTickTimer = 0;
+    this.spotCooldownTimer = 0;
+    this.spotActiveTimer = 0;
+    this.guidedCooldownTimer = 0;
+    this.guidedBulletArmed = false;
+    this.guidedBulletActive = false;
+    this.turboCooldownTimer = 0;
+    this.turboActiveTimer = 0;
+    this.sniperStealthTimer = 0;
+    this.blindTimer = 0;
     this.hitInvulnTimer = 0;
     this.roundTimeDmgBonus = 0;
     this.lastMineTime = 0;
@@ -698,16 +1109,54 @@ export class Tank {
   }
 
   /**
+   * Перевірка, чи знаходиться танк у кущах (високих/низьких) або у воді (мілкій/глибокій)
+   * Використовується для пасивки Важкого корпусу (+10% броні в укритті/воді)
+   */
+  isInCoverOrWater(map, bushes, tileSize, envOptions = null) {
+    if (!tileSize) return false;
+    const cx = this.x + this.size / 2;
+    const cy = this.y + this.size / 2;
+    const c = Math.floor(cx / tileSize);
+    const r = Math.floor(cy / tileSize);
+    const gs = envOptions?.gameState || envOptions;
+    if (r < 0 || c < 0) return false;
+    if (isCellEffectiveHighBush(r, c, gs)) return true;
+    if (map && r < map.length && map[r] && c < map[r].length) {
+      const tileId = getEffectiveTileId(map[r][c], gs);
+      if (tileId === 9 || tileId === 8 || tileId === 3) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Отримання ефективної броні танка з урахуванням пасивки Важкого корпусу (+10% у кущах та воді)
+   */
+  getEffectiveArmor(map = null, bushes = null, tileSize = 18, envOptions = null) {
+    const hullConfig = HULL_TYPES[this.hullType] || HULL_TYPES.standard;
+    let eff = typeof this.armor === 'number' ? this.armor : ((hullConfig && hullConfig.armor) || 0.20);
+    if ((this.coverArmorBonus || 0) > 0 && this.isInCoverOrWater(map, bushes, tileSize, envOptions)) {
+      eff += this.coverArmorBonus;
+    }
+    return Math.max(0, Math.min(0.99, eff));
+  }
+
+  /**
    * Перевірка, чи знаходиться танк на клітинці мілкої (id === 8) або глибокої (id === 3) води
    */
-  isOnShallowWater(map, tileSize) {
+  isOnShallowWater(map, tileSize, envOptions = null) {
     if (!map || !map.length || !tileSize) return false;
     const cx = this.x + this.size / 2;
     const cy = this.y + this.size / 2;
     const c = Math.floor(cx / tileSize);
     const r = Math.floor(cy / tileSize);
+    const gs = envOptions?.gameState || envOptions;
     if (r >= 0 && r < map.length && c >= 0 && c < map[0].length) {
-      return map[r][c] === 8 || map[r][c] === 3;
+      if (gs?.currentMapEvent === 'shuffled_blocks') {
+        const effTile = getEffectiveCellTile(r, c, gs);
+        return effTile.id === 8 || effTile.id === 3;
+      }
+      const tileId = map[r][c];
+      return tileId === 8 || tileId === 3;
     }
     return false;
   }
@@ -715,32 +1164,79 @@ export class Tank {
   /**
    * Перевірка, чи знаходиться танк на клітинці глибокої води (id === 3)
    */
-  isOnDeepWater(map, tileSize) {
+  isOnDeepWater(map, tileSize, envOptions = null) {
     if (!map || !map.length || !tileSize) return false;
     const cx = this.x + this.size / 2;
     const cy = this.y + this.size / 2;
     const c = Math.floor(cx / tileSize);
     const r = Math.floor(cy / tileSize);
+    const gs = envOptions?.gameState || envOptions;
     if (r >= 0 && r < map.length && c >= 0 && c < map[0].length) {
-      return map[r][c] === 3;
+      if (gs?.currentMapEvent === 'shuffled_blocks') {
+        const effTile = getEffectiveCellTile(r, c, gs);
+        return effTile.id === 3;
+      }
+      const tileId = map[r][c];
+      return tileId === 3;
     }
     return false;
   }
 
   /**
-   * Перевірка, чи знаходиться танк на клітинці льоду (шар iceGrid[r][c] === 1 або map[r][c] === 10)
+   * Перевірка, чи знаходиться танк на клітинці снігу (id: 14 або діє подія snow_storm на вільній землі)
    */
-  isOnIce(map, tileSize, iceGrid = null) {
+  isOnSnow(map, tileSize, currentMapEvent = null, envOptions = null) {
     if (!tileSize) return false;
     const cx = this.x + this.size / 2;
     const cy = this.y + this.size / 2;
     const c = Math.floor(cx / tileSize);
     const r = Math.floor(cy / tileSize);
+    const gs = envOptions?.gameState || envOptions;
+    const eventName = currentMapEvent || gs?.currentMapEvent || null;
+    if (map && r >= 0 && r < map.length && map[r] && c >= 0 && c < map[r].length) {
+      if (eventName === 'shuffled_blocks') {
+        const effTile = getEffectiveCellTile(r, c, gs);
+        return effTile.id === 14;
+      }
+      const tileId = map[r][c];
+      if (tileId === 14) return true;
+      if (eventName === 'snow_storm') {
+        // Під час снігопаду вся підлога/трава/каміння (окрім стін 1, 2, 5, 6 та води 3, 8) є снігом
+        const isWall = tileId === 1 || tileId === 2 || tileId === 5 || tileId === 6;
+        const isWater = tileId === 3 || tileId === 8;
+        if (!isWall && !isWater) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Перевірка, чи знаходиться танк на клітинці льоду (шар iceGrid[r][c] === 1, map[r][c] === 10 або вода під час snow_storm)
+   */
+  isOnIce(map, tileSize, iceGrid = null, currentMapEvent = null, envOptions = null) {
+    if (!tileSize) return false;
+    const cx = this.x + this.size / 2;
+    const cy = this.y + this.size / 2;
+    const c = Math.floor(cx / tileSize);
+    const r = Math.floor(cy / tileSize);
+    const gs = envOptions?.gameState || envOptions;
+    const eventName = currentMapEvent || gs?.currentMapEvent || null;
+
+    if (eventName === 'shuffled_blocks') {
+      const effTile = getEffectiveCellTile(r, c, gs);
+      return effTile.id === 10;
+    }
+
     if (iceGrid && r >= 0 && r < iceGrid.length && iceGrid[r] && c >= 0 && c < iceGrid[r].length) {
       if (iceGrid[r][c] === 1) return true;
     }
     if (map && r >= 0 && r < map.length && map[r] && c >= 0 && c < map[r].length) {
-      if (map[r][c] === 10) return true;
+      const tileId = map[r][c];
+      if (tileId === 10) return true;
+      // Під час снігопаду мілка та глибока вода стає льодом!
+      if (eventName === 'snow_storm' && (tileId === 3 || tileId === 8)) {
+        return true;
+      }
     }
     return false;
   }
@@ -777,10 +1273,24 @@ export class Tank {
     this.bodyAngle = Math.atan2(Math.sin(this.bodyAngle), Math.cos(this.bodyAngle));
 
     // 3. Рух корпусу вперед / назад за напрямком bodyAngle (W / S)
-    // Якщо танк на глибокій воді (id: 3) або на мілкій воді (id: 8, без перка ignore_shallow_water) — швидкість сповільнюється на 50%!
-    const onDeepWater = this.isOnDeepWater(map, tileSize);
-    const slowedByWater = onDeepWater || (!this.ignoreShallowWater && this.isOnShallowWater(map, tileSize));
+    const curMapEvent = envOptions?.gameState?.currentMapEvent || envOptions?.currentMapEvent || null;
+    const isSnowStorm = curMapEvent === 'snow_storm';
+
+    // Якщо діє снігопад — вода замерзла в лід і НЕ сповільнює як вода
+    const onDeepWater = !isSnowStorm && this.isOnDeepWater(map, tileSize, envOptions);
+    const slowedByWater = onDeepWater || (!isSnowStorm && !this.ignoreShallowWater && this.isOnShallowWater(map, tileSize, envOptions));
     let currentMoveSpeed = slowedByWater ? (this.speed * 0.5) : this.speed;
+
+    // Сповільнення на снігу на 10% (множник 0.90)
+    const onSnow = this.isOnSnow(map, tileSize, curMapEvent, envOptions);
+    if (onSnow) {
+      currentMoveSpeed *= 0.90;
+    }
+
+    // Якщо активне Турбо-прискорення (turbo_boost) — швидкість збільшується на +50%
+    if ((this.turboActiveTimer || 0) > 0) {
+      currentMoveSpeed *= 1.5;
+    }
 
     // Якщо ворог наїхав на наші сповільнюючі сліди (slowing_tracks) — сповільнюється на 30% (множник 0.70)
     const slowedByTrack = Boolean((envOptions && envOptions.enemyTrackSlow) || this.slowedByEnemyTrack);
@@ -805,9 +1315,9 @@ export class Tank {
       isDriving = true;
     }
 
-    // Перевірка інерції на льоду (якщо немає перка no_ice_slide)
+    // Перевірка інерції на льоду (вкл. замерзлу воду під час снігопаду, якщо немає перка no_ice_slide)
     const iceGrid = envOptions && envOptions.iceGrid ? envOptions.iceGrid : null;
-    const onIce = !this.noIceSlide && this.isOnIce(map, tileSize, iceGrid);
+    const onIce = !this.noIceSlide && this.isOnIce(map, tileSize, iceGrid, curMapEvent, envOptions);
 
     let moveX = 0;
     let moveY = 0;
@@ -840,17 +1350,36 @@ export class Tank {
       this.trackTimer++;
     }
 
+    // Оптичний камуфляж башти «Снайпер»: через 1с (60 кадрів) стояння корпусу стає невидимим.
+    // Поворот башти та стрільба НЕ скидають таймер! Рух/поворот корпусу миттєво скидає таймер.
+    if (this.turretType === 'sniper') {
+      if (this.isMoving) {
+        this.sniperStealthTimer = 0;
+      } else {
+        this.sniperStealthTimer = (this.sniperStealthTimer || 0) + 1;
+      }
+    } else {
+      this.sniperStealthTimer = 0;
+    }
+
     // 4. Плавна обробка колізій зі слайдингом (ковзанням вздовж стін)
     if (isSlidingOrDriving) {
       const pad = 2;
-      const boxSize = this.size - pad * 2;
+      const boxSize = Math.max(4, this.size - pad * 2);
+
+      const checkTankColl = (tx, ty) => {
+        if (!otherTank) return false;
+        if (Array.isArray(otherTank)) {
+          return otherTank.some(t => t && t !== this && !t.isDead && checkTankCollision(this, t, tx, ty));
+        }
+        return !otherTank.isDead && checkTankCollision(this, otherTank, tx, ty);
+      };
 
       // Спроба повного руху
       let testX = Math.max(0, Math.min(canvasWidth - this.size, this.x + moveX));
       let testY = Math.max(0, Math.min(canvasHeight - this.size, this.y + moveY));
 
-      const collFull = checkMapCollision(testX + pad, testY + pad, boxSize, boxSize, map, this) ||
-                       (otherTank && checkTankCollision(this, otherTank, testX, testY));
+      const collFull = checkMapCollision(testX + pad, testY + pad, boxSize, boxSize, map, this) || checkTankColl(testX, testY);
 
       if (!collFull) {
         this.x = testX;
@@ -858,8 +1387,7 @@ export class Tank {
       } else {
         // Слайдинг по осі X
         testX = Math.max(0, Math.min(canvasWidth - this.size, this.x + moveX));
-        const collX = checkMapCollision(testX + pad, this.y + pad, boxSize, boxSize, map, this) ||
-                      (otherTank && checkTankCollision(this, otherTank, testX, this.y));
+        const collX = checkMapCollision(testX + pad, this.y + pad, boxSize, boxSize, map, this) || checkTankColl(testX, this.y);
         if (!collX && moveX !== 0) {
           this.x = testX;
         } else if (onIce) {
@@ -868,8 +1396,7 @@ export class Tank {
 
         // Слайдинг по осі Y
         testY = Math.max(0, Math.min(canvasHeight - this.size, this.y + moveY));
-        const collY = checkMapCollision(this.x + pad, testY + pad, boxSize, boxSize, map, this) ||
-                      (otherTank && checkTankCollision(this, otherTank, this.x, testY));
+        const collY = checkMapCollision(this.x + pad, testY + pad, boxSize, boxSize, map, this) || checkTankColl(this.x, testY);
         if (!collY && moveY !== 0) {
           this.y = testY;
         } else if (onIce) {
@@ -926,7 +1453,7 @@ export class Tank {
     const currentAmmo = typeof this.ammo === 'number' ? this.ammo : this.clipSize;
     this.ammo = Math.max(0, currentAmmo - 1);
 
-    // Коли відстріляно всі снаряди касети (5 для важкого, 10 для середнього, 15 для швидкісного) —
+    // Коли відстріляно всі снаряди касети (5 для важкого/снайпера, 10 для середнього/рикошету, 15 для швидкісного) —
     // вмикається перезарядка касети (2с / 3с / 4с)
     if (this.ammo <= 0) {
       this.isReloadingClip = true;
@@ -981,6 +1508,8 @@ export class Tank {
 
     if (this.turretType === 'heavy') {
       gunLen = Math.floor(this.size * 0.72);
+    } else if (this.turretType === 'sniper') {
+      gunLen = Math.max(12, Math.floor(this.size * 0.88));
     } else if (this.turretType === 'rapid') {
       gunLen = Math.floor(this.size * 0.58);
       const barrelSpacing = Math.max(3.5, Math.floor(this.size * 0.13));
@@ -1013,8 +1542,11 @@ export class Tank {
     this.vx = 0;
     this.vy = 0;
     this.bodyAngle = this.spawnAngle;
-    this.turretAngle = this.spawnAngle;
+    this.applyLoadout(this.hullType, this.turretType);
     this.hp = this.maxHp;
+    this.isOnAcid = false;
+    this.acidTimer = 0;
+    this.woodenBushRegenTimer = 0;
     this.spawnShieldTimer = 150;
     this.hitInvulnTimer = 0;
     this.lastShootTime = 0;
@@ -1026,8 +1558,22 @@ export class Tank {
       this.rerollsLeft = this.maxRerolls || 0;
     }
     this.smokeCooldownTimer = 0;
+    this.smokeActiveTimer = 0;
     this.artilleryCooldownTimer = 0;
+    this.artilleryPendingTimer = 0;
     this.targetingMode = null;
+    this.beaconCooldownTimer = 0;
+    this.beaconActiveTimer = 0;
+    this.beaconHealTickTimer = 0;
+    this.spotCooldownTimer = 0;
+    this.spotActiveTimer = 0;
+    this.guidedCooldownTimer = 0;
+    this.guidedBulletArmed = false;
+    this.guidedBulletActive = false;
+    this.turboCooldownTimer = 0;
+    this.turboActiveTimer = 0;
+    this.sniperStealthTimer = 0;
+    this.blindTimer = 0;
     this.roundTimeDmgBonus = 0;
     if (typeof this.baseMaxDmg === 'number') {
       this.maxDmg = this.baseMaxDmg;
@@ -1064,6 +1610,12 @@ export class Tank {
     this.reloadProgress = 1;
     this.proximityTimer = 0;
     this.targetingMode = null;
+    this.beaconActiveTimer = 0;
+    this.beaconHealTickTimer = 0;
+    this.guidedBulletArmed = false;
+    this.turboActiveTimer = 0;
+    this.sniperStealthTimer = 0;
+    this.blindTimer = 0;
     return true;
   }
 
@@ -1087,16 +1639,34 @@ export class Tank {
     if (Number.isFinite(data.bodyAngle)) this.bodyAngle = data.bodyAngle;
     if (Number.isFinite(data.turretAngle)) this.turretAngle = data.turretAngle;
     const incomingPerks = Array.isArray(data.perks) ? data.perks : (Array.isArray(data.acquiredPerks) ? data.acquiredPerks : null);
+    const incomingCurses = Array.isArray(data.curses) ? data.curses : (Array.isArray(data.acquiredCurses) ? data.acquiredCurses : null);
+    let needLoadoutUpdate = false;
+
     if (incomingPerks) {
       const samePerks = this.acquiredPerks.length === incomingPerks.length &&
         this.acquiredPerks.every((p, idx) => p === incomingPerks[idx]);
       if (!samePerks) {
         this.acquiredPerks = [...incomingPerks];
-        this.applyLoadout(data.hull || this.hullType, data.turret || this.turretType);
+        needLoadoutUpdate = true;
+      }
+    }
+    if (incomingCurses) {
+      if (!Array.isArray(this.acquiredCurses)) this.acquiredCurses = [];
+      const sameCurses = this.acquiredCurses.length === incomingCurses.length &&
+        this.acquiredCurses.every((c, idx) => c === incomingCurses[idx]);
+      if (!sameCurses) {
+        this.acquiredCurses = [...incomingCurses];
+        needLoadoutUpdate = true;
       }
     }
     if ((data.hull && data.hull !== this.hullType) || (data.turret && data.turret !== this.turretType)) {
+      needLoadoutUpdate = true;
+    }
+    if (needLoadoutUpdate) {
       this.applyLoadout(data.hull || this.hullType, data.turret || this.turretType);
+    }
+    if (typeof data.size === 'number' && data.size > 0) {
+      this.size = data.size;
     }
     if (typeof data.maxHp === 'number' && data.maxHp > 0) this.maxHp = data.maxHp;
     if (typeof data.hp === 'number') this.hp = data.hp;
@@ -1108,6 +1678,10 @@ export class Tank {
     }
     this.animFrame = data.animFrame;
     if (typeof data.fov === 'number') this.fov = data.fov;
+    if (typeof data.spreadHalfAngleDeg === 'number') {
+      this.spreadHalfAngleDeg = data.spreadHalfAngleDeg;
+      this.spreadDeg = +(data.spreadHalfAngleDeg * 2).toFixed(2);
+    }
     if (typeof data.minDmg === 'number') this.minDmg = data.minDmg;
     if (typeof data.maxDmg === 'number') this.maxDmg = data.maxDmg;
     if (typeof data.roundTimeDmgBonus === 'number') this.roundTimeDmgBonus = data.roundTimeDmgBonus;
@@ -1159,6 +1733,9 @@ export class Tank {
         this.smokeCooldownTimer = data.smokeCooldownTimer;
       }
     }
+    if (typeof data.smokeActiveTimer === 'number') {
+      this.smokeActiveTimer = data.smokeActiveTimer;
+    }
     if (typeof data.hasArtillery === 'boolean') {
       this.hasArtillery = data.hasArtillery;
     }
@@ -1168,6 +1745,87 @@ export class Tank {
       if (!recentlyTriggeredArtillery || data.artilleryCooldownTimer > 0) {
         this.artilleryCooldownTimer = data.artilleryCooldownTimer;
       }
+    }
+    if (typeof data.artilleryPendingTimer === 'number') {
+      this.artilleryPendingTimer = data.artilleryPendingTimer;
+    }
+    if (typeof data.hasBeaconHeal === 'boolean') {
+      this.hasBeaconHeal = data.hasBeaconHeal;
+    }
+    if (typeof data.beaconStacks === 'number') {
+      this.beaconStacks = data.beaconStacks;
+      this.beaconHealStacks = data.beaconStacks;
+    } else if (typeof data.beaconHealStacks === 'number') {
+      this.beaconStacks = data.beaconHealStacks;
+      this.beaconHealStacks = data.beaconHealStacks;
+    }
+    if (typeof data.beaconCooldownTimer === 'number') {
+      const recentlyTriggeredBeacon =
+        this.lastBeaconLocalTriggerTime && (Date.now() - this.lastBeaconLocalTriggerTime < 600);
+      if (!recentlyTriggeredBeacon || data.beaconCooldownTimer > 0) {
+        this.beaconCooldownTimer = data.beaconCooldownTimer;
+      }
+    }
+    if (typeof data.beaconActiveTimer === 'number') {
+      this.beaconActiveTimer = data.beaconActiveTimer;
+    }
+    if (typeof data.hasSpotEnemy === 'boolean') {
+      this.hasSpotEnemy = data.hasSpotEnemy;
+    }
+    if (typeof data.spotCooldownTimer === 'number') {
+      const recentlyTriggeredSpot =
+        this.lastSpotLocalTriggerTime && (Date.now() - this.lastSpotLocalTriggerTime < 600);
+      if (!recentlyTriggeredSpot || data.spotCooldownTimer > 0) {
+        this.spotCooldownTimer = data.spotCooldownTimer;
+      }
+    }
+    if (typeof data.spotActiveTimer === 'number') {
+      this.spotActiveTimer = data.spotActiveTimer;
+    }
+    if (typeof data.hasGuidedBullet === 'boolean') {
+      this.hasGuidedBullet = data.hasGuidedBullet;
+    }
+    if (typeof data.hasVampiricShot === 'boolean') {
+      this.hasVampiricShot = data.hasVampiricShot;
+    }
+    if (typeof data.hasMagneticBullets === 'boolean') {
+      this.hasMagneticBullets = data.hasMagneticBullets;
+    }
+    if (typeof data.guidedCooldownTimer === 'number') {
+      const recentlyTriggeredGuided =
+        this.lastGuidedLocalTriggerTime && (Date.now() - this.lastGuidedLocalTriggerTime < 600);
+      if (!recentlyTriggeredGuided || data.guidedCooldownTimer > 0) {
+        this.guidedCooldownTimer = data.guidedCooldownTimer;
+      }
+    }
+    if (typeof data.guidedBulletArmed === 'boolean') {
+      const recentlyTriggeredGuided =
+        this.lastGuidedLocalTriggerTime && (Date.now() - this.lastGuidedLocalTriggerTime < 600);
+      if (!recentlyTriggeredGuided) {
+        this.guidedBulletArmed = data.guidedBulletArmed;
+      }
+    }
+    if (typeof data.guidedBulletActive === 'boolean') {
+      this.guidedBulletActive = data.guidedBulletActive;
+    }
+    if (typeof data.hasTurboBoost === 'boolean') {
+      this.hasTurboBoost = data.hasTurboBoost;
+    }
+    if (typeof data.turboCooldownTimer === 'number') {
+      const recentlyTriggeredTurbo =
+        this.lastTurboLocalTriggerTime && (Date.now() - this.lastTurboLocalTriggerTime < 600);
+      if (!recentlyTriggeredTurbo || data.turboCooldownTimer > 0) {
+        this.turboCooldownTimer = data.turboCooldownTimer;
+      }
+    }
+    if (typeof data.turboActiveTimer === 'number') {
+      this.turboActiveTimer = data.turboActiveTimer;
+    }
+    if (typeof data.sniperStealthTimer === 'number') {
+      this.sniperStealthTimer = data.sniperStealthTimer;
+    }
+    if (typeof data.blindTimer === 'number') {
+      this.blindTimer = Math.max(this.blindTimer || 0, data.blindTimer);
     }
     if (this.localSelectedActive) {
       this.selectedActive = this.localSelectedActive;
@@ -1239,7 +1897,7 @@ export class Tank {
 }
 
 /**
- * Клас снаряда зі швидкістю за вектором turretAngle, шкодою, пробиттям ворожих куль, рикошетами та ігноруванням броні
+ * Клас снаряда зі швидкістю за вектором turretAngle, шкодою, пробиттям ворожих куль, рикошетами, ігноруванням броні та керованим наведенням
  */
 export class Bullet {
   /**
@@ -1250,10 +1908,11 @@ export class Bullet {
    * @param {number} vy - вектор швидкості по Y
    * @param {number} damage - нанесена шкода при влучанні
    * @param {number} angle - кут траєкторії
-   * @param {Object} options - додаткові властивості { pierceLeft, ricochetsLeft, ignoreArmor, instantBreak, invisibleToEnemy }
+   * @param {Object} options - додаткові властивості { pierceLeft, ricochetsLeft, ignoreArmor, instantBreak, invisibleToEnemy, isGuided, isTracer, speed }
    */
   constructor(ownerId, x, y, vx, vy, damage = 20, angle = 0, options = {}) {
     this.ownerId = ownerId;
+    this.team = Number(options.team) || ownerId;
     this.x = x;
     this.y = y;
     this.vx = vx;
@@ -1265,12 +1924,55 @@ export class Bullet {
     this.ignoreArmor = Boolean(options.ignoreArmor);
     this.instantBreak = Boolean(options.instantBreak);
     this.invisibleToEnemy = Boolean(options.invisibleToEnemy);
+    this.isGuided = Boolean(options.isGuided);
+    this.isTracer = Boolean(options.isTracer);
+    this.blindsOnHit = Boolean(options.blindsOnHit);
+    this.healsOnHit = Boolean(options.healsOnHit);
+    this.isMagnetic = Boolean(options.isMagnetic);
+    this.speed = typeof options.speed === 'number' && options.speed > 0 ? options.speed : Math.hypot(vx, vy) || 4;
     this.w = 6;
     this.h = 6;
     this.trail = [];
   }
 
-  update() {
+  update(targetX = null, targetY = null, enemyTank = null) {
+    if (this.isGuided && Number.isFinite(targetX) && Number.isFinite(targetY)) {
+      const dist = Math.hypot(targetX - this.x, targetY - this.y);
+      if (dist > 4) {
+        const desiredAngle = Math.atan2(targetY - this.y, targetX - this.x);
+        const diff = Math.atan2(Math.sin(desiredAngle - this.angle), Math.cos(desiredAngle - this.angle));
+        const turnRate = 0.14;
+        if (Math.abs(diff) <= turnRate) {
+          this.angle = desiredAngle;
+        } else {
+          this.angle += Math.sign(diff) * turnRate;
+        }
+        this.angle = Math.atan2(Math.sin(this.angle), Math.cos(this.angle));
+        this.vx = Math.cos(this.angle) * this.speed;
+        this.vy = Math.sin(this.angle) * this.speed;
+      }
+    } else if (this.isMagnetic && !this.isGuided && enemyTank && !enemyTank.isDead) {
+      const enemyCx = enemyTank.x + (enemyTank.size || 40) / 2;
+      const enemyCy = enemyTank.y + (enemyTank.size || 40) / 2;
+      const dist = Math.hypot(enemyCx - this.x, enemyCy - this.y);
+      // Магнітне відхилення діє, якщо ворог попереду та у зоні дії (до ~140px)
+      if (dist < 140 && dist > 6) {
+        const desiredAngle = Math.atan2(enemyCy - this.y, enemyCx - this.x);
+        const diff = Math.atan2(Math.sin(desiredAngle - this.angle), Math.cos(desiredAngle - this.angle));
+        // Тільки якщо ворог знаходиться у передній півсфері польоту (не розвертатися назад)
+        if (Math.cos(diff) > 0.15) {
+          const turnRate = 0.018; // Плавне магнітне відхилення траєкторії в бік ворога
+          if (Math.abs(diff) <= turnRate) {
+            this.angle = desiredAngle;
+          } else {
+            this.angle += Math.sign(diff) * turnRate;
+          }
+          this.angle = Math.atan2(Math.sin(this.angle), Math.cos(this.angle));
+          this.vx = Math.cos(this.angle) * this.speed;
+          this.vy = Math.sin(this.angle) * this.speed;
+        }
+      }
+    }
     this.x += this.vx;
     this.y += this.vy;
   }
@@ -1283,6 +1985,49 @@ export class Bullet {
     ctx.save();
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
+
+    if (this.isGuided) {
+      // Спеціальний ефект керованого снаряда (ракета з неоновим ореолом)
+      ctx.fillStyle = this.healsOnHit ? 'rgba(46, 204, 113, 0.45)' : 'rgba(255, 0, 234, 0.35)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 6.5, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(-4, -2.5, 9, 5);
+      ctx.fillStyle = this.healsOnHit ? '#2ecc71' : '#ff00ea';
+      ctx.fillRect(-3, -2, 6, 4);
+      ctx.fillStyle = '#00e5ff';
+      ctx.fillRect(-5, -1.5, 2, 3);
+      ctx.restore();
+      return;
+    }
+
+    if (this.isTracer) {
+      // Подовжений високошвидкісний снайперський снаряд-трасер
+      ctx.fillStyle = 'rgba(255, 118, 117, 0.45)';
+      ctx.fillRect(-10, -2.5, 16, 5);
+      ctx.fillStyle = '#fff9c4';
+      ctx.fillRect(-8, -1.5, 13, 3);
+      ctx.fillStyle = '#ff7675';
+      ctx.fillRect(-11, -1, 4, 2);
+      ctx.restore();
+      return;
+    }
+
+    if (this.isMagnetic) {
+      ctx.fillStyle = 'rgba(0, 229, 255, 0.38)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (this.healsOnHit) {
+      ctx.fillStyle = 'rgba(46, 204, 113, 0.45)';
+      ctx.beginPath();
+      ctx.arc(0, 0, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Яскравий снаряд високої контрастності
     ctx.fillStyle = '#ffffff';
@@ -1315,8 +2060,9 @@ export class Mine {
    * @param {number} minDmg - мінімальна шкода (40)
    * @param {number} maxDmg - максимальна шкода (60)
    */
-  constructor(ownerId, x, y, minDmg = 40, maxDmg = 60) {
+  constructor(ownerId, x, y, minDmg = 40, maxDmg = 60, options = {}) {
     this.ownerId = ownerId;
+    this.team = Number(options.team) || ownerId;
     this.x = x;
     this.y = y;
     this.radius = 10;
@@ -1374,6 +2120,126 @@ export class Mine {
     ctx.beginPath();
     ctx.arc(0, 0, 2.6, 0, Math.PI * 2);
     ctx.fill();
+
+    ctx.restore();
+  }
+}
+
+/**
+ * Клас літаючої сфери для події «Аномальні сфери» (chaos_orbs):
+ * - Крутиться (анімація обертання)
+ * - Літає по карті, відскакує від стін та меж арени
+ * - Стріляє в чотири сторони (хрестом) кожні 2 секунди (120 кадрів)
+ */
+export class FlyingOrb {
+  constructor(x, y, vx = null, vy = null, id = 0) {
+    this.id = id || Math.floor(Math.random() * 100000) + 1;
+    this.x = x;
+    this.y = y;
+    const speed = 2.4;
+    const angle = Math.random() * Math.PI * 2;
+    this.vx = typeof vx === 'number' ? vx : Math.cos(angle) * speed;
+    this.vy = typeof vy === 'number' ? vy : Math.sin(angle) * speed;
+    this.radius = 13;
+    this.rotationAngle = 0;
+    this.angle = 0;
+    this.shootTimer = Math.floor(Math.random() * 60); // невеликий розсинхрон на старті
+    this.shootInterval = 120; // 2 секунди (120 кадрів)
+  }
+
+  update(canvasWidth, canvasHeight, map, tileSize, onShoot = null) {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.rotationAngle += 0.05;
+    this.angle = this.rotationAngle;
+
+    // 1. Відбивання від меж арени
+    if (this.x - this.radius <= 0) {
+      this.x = this.radius;
+      this.vx = Math.abs(this.vx);
+    } else if (this.x + this.radius >= canvasWidth) {
+      this.x = canvasWidth - this.radius;
+      this.vx = -Math.abs(this.vx);
+    }
+    if (this.y - this.radius <= 0) {
+      this.y = this.radius;
+      this.vy = Math.abs(this.vy);
+    } else if (this.y + this.radius >= canvasHeight) {
+      this.y = canvasHeight - this.radius;
+      this.vy = -Math.abs(this.vy);
+    }
+
+    // 2. Відбивання від твердих блоків карти
+    if (map && tileSize > 0) {
+      const col = Math.floor(this.x / tileSize);
+      const row = Math.floor(this.y / tileSize);
+      const nextCol = Math.floor((this.x + Math.sign(this.vx) * (this.radius + 2)) / tileSize);
+      const nextRow = Math.floor((this.y + Math.sign(this.vy) * (this.radius + 2)) / tileSize);
+
+      if (row >= 0 && row < map.length && nextCol >= 0 && nextCol < map[0].length) {
+        const tileX = map[row][nextCol];
+        if (tileX === 1 || tileX === 2 || tileX === 5 || tileX === 6 || tileX === 15 || tileX === 17) {
+          this.vx = -this.vx;
+        }
+      }
+      if (nextRow >= 0 && nextRow < map.length && col >= 0 && col < map[0].length) {
+        const tileY = map[nextRow][col];
+        if (tileY === 1 || tileY === 2 || tileY === 5 || tileY === 6 || tileY === 15 || tileY === 17) {
+          this.vy = -this.vy;
+        }
+      }
+    }
+
+    // 3. Стрільба в 4 сторони
+    this.shootTimer++;
+    if (this.shootTimer >= this.shootInterval) {
+      this.shootTimer = 0;
+      if (typeof onShoot === 'function') {
+        onShoot(this.x, this.y, this.rotationAngle);
+      }
+    }
+  }
+
+  draw(ctx) {
+    if (!ctx) return;
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.rotationAngle);
+
+    // Неоновий ореол навколо кулі
+    const grad = ctx.createRadialGradient(0, 0, this.radius * 0.2, 0, 0, this.radius * 1.55);
+    grad.addColorStop(0, 'rgba(162, 155, 254, 0.95)');
+    grad.addColorStop(0.5, 'rgba(108, 92, 231, 0.65)');
+    grad.addColorStop(1, 'rgba(108, 92, 231, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0, 0, this.radius * 1.55, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 4 гарматні сопла (хрест під кутом rotationAngle)
+    ctx.fillStyle = '#dfe6e9';
+    ctx.strokeStyle = '#6c5ce7';
+    ctx.lineWidth = 1.4;
+    for (let i = 0; i < 4; i++) {
+      const a = (i * Math.PI) / 2;
+      ctx.save();
+      ctx.rotate(a);
+      ctx.fillRect(-2, this.radius - 2, 4, 6);
+      ctx.strokeRect(-2, this.radius - 2, 4, 6);
+      ctx.restore();
+    }
+
+    // Центральне ядро кулі
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = '#a29bfe';
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.arc(0, 0, this.radius * 0.72, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#6c5ce7';
+    ctx.lineWidth = 2;
+    ctx.stroke();
 
     ctx.restore();
   }
