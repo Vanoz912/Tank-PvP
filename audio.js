@@ -1,5 +1,5 @@
 /**
- *  — Аудіо система (8-бітний ретро-синтезатор Web Audio API)
+ * audio.js — Аудіо система (8-бітний ретро-синтезатор Web Audio API)
  *
  * Відповідає виключно за генерацію звукових ефектів пострілів, влучань,
  * вибухів, виявлення ворога та перемоги без зовнішніх аудіофайлів.
@@ -119,6 +119,26 @@ export class SoundFX {
       osc.connect(gain); gain.connect(this.ctx.destination);
       osc.start(startTime); osc.stop(startTime + duration);
     });
+  }
+  playAcidSizzle() {
+    if (this.muted) return;
+    this.init();
+    if (!this.ctx) return;
+    const size = Math.floor(this.ctx.sampleRate * 0.12);
+    const buffer = this.ctx.createBuffer(1, size, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < size; i++) data[i] = Math.random() * 2 - 1;
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buffer;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 1600;
+    filter.Q.value = 2.5;
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.18, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.12);
+    noise.connect(filter); filter.connect(gain); gain.connect(this.ctx.destination);
+    noise.start();
   }
 }
 
