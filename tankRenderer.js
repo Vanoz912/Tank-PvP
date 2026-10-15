@@ -266,6 +266,98 @@ export function drawTankModel(tank, ctx, renderPos, isGhost = false, ghostAlpha 
       ctx.fillRect(-half + 1, half - 2.2, treadW - 2, 1.8);
       ctx.fillRect(half - treadW + 1, half - 2.2, treadW - 2, 1.8);
 
+    } else if (hullType === 'baby') {
+      // ----------------------------------------
+      // КОРПУС «МАЛЮК» (-50% розмір, компактна міні-танкетка)
+      // ----------------------------------------
+      const treadW = Math.max(3, Math.floor(tank.size * 0.24));
+      drawSingleTread(tank, ctx, -half, -half, treadW, tank.size, isGhost, 'light');
+      drawSingleTread(tank, ctx, half - treadW, -half, treadW, tank.size, isGhost, 'light');
+
+      const hullX = -half + treadW + 0.5;
+      const hullY = -half + 1;
+      const hullW = Math.max(4, tank.size - (treadW * 2) - 1);
+      const hullH = Math.max(4, tank.size - 2);
+
+      // Компактна бронекапсула танкетки
+      ctx.fillStyle = isGhost ? '#555555' : tank.baseColor;
+      ctx.fillRect(hullX, hullY, hullW, hullH);
+      ctx.strokeStyle = borderColor;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(hullX + 0.5, hullY + 0.5, hullW - 1, hullH - 1);
+
+      // Яскравий передній щиток
+      ctx.fillStyle = isGhost ? '#777777' : tank.lightColor;
+      ctx.fillRect(hullX + 1, hullY + 1, Math.max(2, hullW - 2), Math.max(2, Math.floor(hullH * 0.35)));
+
+      // Міні-фари спереду (-Y)
+      ctx.fillStyle = isGhost ? '#888' : '#ffeaa7';
+      ctx.fillRect(-half + 0.5, -half + 0.5, Math.max(1.5, treadW - 1), 1.5);
+      ctx.fillRect(half - treadW + 0.5, -half + 0.5, Math.max(1.5, treadW - 1), 1.5);
+
+      // Стоп-вогні ззаду (+Y)
+      ctx.fillStyle = isGhost ? '#555' : '#ff4757';
+      ctx.fillRect(-half + 0.5, half - 1.8, Math.max(1.5, treadW - 1), 1.3);
+      ctx.fillRect(half - treadW + 0.5, half - 1.8, Math.max(1.5, treadW - 1), 1.3);
+
+    } else if (hullType === 'wooden') {
+      // ----------------------------------------
+      // ДЕРЕВ'ЯНИЙ КОРПУС: Еко-танк із фактурних міцних дубових брусів, металевих кованих смуг та заклепок
+      // ----------------------------------------
+      const treadW = Math.max(5, Math.floor(tank.size * 0.22));
+      drawSingleTread(tank, ctx, -half, -half, treadW, tank.size, isGhost, 'light');
+      drawSingleTread(tank, ctx, half - treadW, -half, treadW, tank.size, isGhost, 'light');
+
+      const hullX = -half + treadW + 0.5;
+      const hullY = -half + 1;
+      const hullW = tank.size - (treadW * 2) - 1;
+      const hullH = tank.size - 2;
+
+      // 1. Темна дубова основа
+      ctx.fillStyle = isGhost ? '#3e3e3e' : '#4a2f13';
+      ctx.fillRect(hullX, hullY, hullW, hullH);
+
+      // 2. Дерев'яні дошки корпусу (3 бруси з відтінками натурального дуба)
+      const plankH = hullH / 3;
+      const woodColors = isGhost ? ['#555', '#484848', '#505050'] : ['#8b5a2b', '#7a4e25', '#9a6430'];
+      for (let i = 0; i < 3; i++) {
+        ctx.fillStyle = woodColors[i];
+        ctx.fillRect(hullX + 1, hullY + i * plankH + 0.5, hullW - 2, plankH - 1);
+        // Поздовжні лінії волокон деревини
+        ctx.fillStyle = isGhost ? 'rgba(0,0,0,0.2)' : '#5c3818';
+        ctx.fillRect(hullX + 2, hullY + i * plankH + plankH * 0.45, hullW - 4, 1);
+      }
+
+      // 3. Ковані залізні кутові накладки
+      ctx.fillStyle = isGhost ? '#666' : '#2d3436';
+      ctx.fillRect(hullX, hullY, 3, hullH);
+      ctx.fillRect(hullX + hullW - 3, hullY, 3, hullH);
+
+      // Кована смуга по центру з кольором гравця
+      ctx.fillStyle = isGhost ? '#777' : tank.baseColor;
+      ctx.fillRect(-2, hullY + 2, 4, hullH - 4);
+
+      // Сталеві заклепки на кутах
+      ctx.fillStyle = isGhost ? '#888' : '#bdc3c7';
+      [-half + 3, 0, half - 3].forEach(ry => {
+        ctx.fillRect(hullX + 0.5, ry - 0.7, 1.5, 1.5);
+        ctx.fillRect(hullX + hullW - 2, ry - 0.7, 1.5, 1.5);
+      });
+
+      // Передній дерев'яний щит - ПЕРЕД (-Y)
+      ctx.fillStyle = isGhost ? '#666' : tank.lightColor;
+      ctx.fillRect(-half + treadW + 2, -half + 1, hullW - 4, 2);
+
+      // Теплі ліхтарі-фари спереду
+      ctx.fillStyle = isGhost ? '#888' : '#ffeaa7';
+      ctx.fillRect(-half + 0.5, -half + 1, treadW - 1, 1.8);
+      ctx.fillRect(half - treadW + 0.5, -half + 1, treadW - 1, 1.8);
+
+      // Задні червоні габарити - КОРМА (+Y)
+      ctx.fillStyle = isGhost ? '#555' : '#e74c3c';
+      ctx.fillRect(-half + 0.5, half - 2.2, treadW - 1, 1.6);
+      ctx.fillRect(half - treadW + 0.5, half - 2.2, treadW - 1, 1.6);
+
     } else {
       // ----------------------------------------
       // СТАНДАРТНИЙ КОРПУС: Збалансований класичний танк, скошений лобовий лист, подвійні фари
@@ -511,6 +603,56 @@ export function drawTankModel(tank, ctx, renderPos, isGhost = false, ghostAlpha 
       ctx.fillStyle = isGhost ? '#555555' : '#00d8d6';
       ctx.beginPath();
       ctx.arc(0, 1, Math.max(2, tr * 0.36), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+    } else if (turretType === 'sniper') {
+      // ----------------------------------------
+      // БАШТА «СНАЙПЕР»: Наддовгий високоточний ствол, оптичний приціл, кожух охолодження
+      // ----------------------------------------
+      const gunW = Math.max(2.5, Math.floor(tank.size * 0.11));
+      const gunLen = Math.max(12, Math.floor(tank.size * 0.88));
+
+      // 1. Подовжений снайперський ствол
+      ctx.fillStyle = isGhost ? '#aaaaaa' : '#dfe6e9';
+      ctx.fillRect(-gunW / 2, -gunLen, gunW, gunLen + 2);
+      ctx.strokeStyle = borderColor;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(-gunW / 2, -gunLen, gunW, gunLen + 2);
+
+      // Кожух стабілізації біля основи ствола
+      const shroudLen = Math.floor(gunLen * 0.45);
+      ctx.fillStyle = isGhost ? '#666666' : '#636e72';
+      ctx.fillRect(-gunW / 2 - 1, -shroudLen, gunW + 2, shroudLen);
+      ctx.strokeRect(-gunW / 2 - 1, -shroudLen, gunW + 2, shroudLen);
+
+      // Снайперське щілинне дульне гальмо на кінчику
+      const brakeW = gunW + 3;
+      ctx.fillStyle = isGhost ? '#555555' : '#2d3436';
+      ctx.fillRect(-brakeW / 2, -gunLen - 1, brakeW, 4);
+      ctx.strokeRect(-brakeW / 2, -gunLen - 1, brakeW, 4);
+
+      // 2. Вузька обтічна башта снайпера з кормовою нішею
+      const tw = Math.max(4.5, Math.floor(tank.size * 0.22));
+      const th = Math.max(5.5, Math.floor(tank.size * 0.28));
+      ctx.fillStyle = isGhost ? '#666666' : tank.lightColor;
+      ctx.beginPath();
+      ctx.moveTo(-tw * 0.75, -th);
+      ctx.lineTo(tw * 0.75, -th);
+      ctx.lineTo(tw, -th * 0.2);
+      ctx.lineTo(tw * 0.85, th);
+      ctx.lineTo(-tw * 0.85, th);
+      ctx.lineTo(-tw, -th * 0.2);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = borderColor;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // Лазерний далекомір / оптичний приціл праворуч від ствола
+      ctx.fillStyle = isGhost ? '#777777' : '#ff7675';
+      ctx.beginPath();
+      ctx.arc(tw * 0.45, -th * 0.45, Math.max(1.5, tank.size * 0.06), 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
 
