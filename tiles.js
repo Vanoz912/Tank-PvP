@@ -459,6 +459,74 @@ export const TILE_TYPES = {
     draw: (ctx, x, y, size) => {
       drawStoneDecorTile2(ctx, x, y, size);
     }
+  },
+
+  SNOW: {
+    id: 14,
+    name: '❄️ Сніг',
+    description: 'Сніговий покрив (рівень ґрунту/води): сповільнює танк на 10%, сліди гусениць тримаються в 2 рази довше (невидимі сліди невидно). Снаряди пролітають вільно.',
+    color: '#dff9fb',
+    editorColor: '#dff9fb',
+    blocksTank: false,
+    blocksBullet: false,
+    destructible: false,
+    isSnow: true,
+    isGroundLayer: true,
+    slowFactor: 0.10, // Сповільнює рух на 10%
+    maxHp: 0,
+    draw: (ctx, x, y, size) => {
+      drawSnowTile(ctx, x, y, size);
+    }
+  },
+
+  ARMORED_GLASS: {
+    id: 15,
+    name: '🛡️ Броньоване скло',
+    description: 'Монолітний броньований блок зі скла. Через нього видно ворогів та кулі, але його неможливо пробити жодною звичайною гарматою. Може бути знищений тільки прямим влучанням у центр артилерії.',
+    color: '#74b9ff',
+    editorColor: '#0984e3',
+    blocksTank: true,
+    blocksBullet: true,
+    destructible: false,
+    transparentVision: true,
+    isArmoredGlass: true,
+    maxHp: 0,
+    draw: (ctx, x, y, size) => {
+      drawArmoredGlassTile(ctx, x, y, size);
+    }
+  },
+
+  ACID: {
+    id: 16,
+    name: '🧪 Кислота',
+    description: 'Токсична хімічна калюжа на рівні землі: при наїзді танк одразу втрачає 5 HP, а при подальшому перебуванні — по 5 HP кожні 3 секунди. Кулі пролітають вільно.',
+    color: '#2ed573',
+    editorColor: '#2ed573',
+    blocksTank: false,
+    blocksBullet: false,
+    destructible: false,
+    isGroundLayer: true,
+    isAcid: true,
+    maxHp: 0,
+    draw: (ctx, x, y, size, wavePhase = 0) => {
+      drawAcidTile(ctx, x, y, size, wavePhase);
+    }
+  },
+
+  ACID_BARREL: {
+    id: 17,
+    name: '🛢️ Бочка з кислотою (3 HP)',
+    description: 'Вибухонебезпечна бочка з токсичною речовиною. Витримує 3 пошкодження. При руйнуванні під нею з\'являється кислота, а в зоні 3x3 на вільних ділянках випадково розливаються ще 2 кислоти.',
+    color: '#26de81',
+    editorColor: '#26de81',
+    blocksTank: true,
+    blocksBullet: true,
+    destructible: true,
+    isAcidBarrel: true,
+    maxHp: 3,
+    draw: (ctx, x, y, size, wavePhase = 0, hp = 3) => {
+      drawAcidBarrelTile(ctx, x, y, size, wavePhase, hp);
+    }
   }
 };
 
@@ -1070,6 +1138,253 @@ export function drawIceTile(ctx, x, y, size) {
   ctx.restore();
 }
 
+/**
+ * Рендеринг елемента «Сніг» (TILE_TYPES.SNOW, id: 14)
+ * М'який біло-блакитний сніговий покрив із кристалами та рельєфними заметами
+ */
+export function drawSnowTile(ctx, x, y, size) {
+  ctx.save();
+  const s = size / 32;
+  const p = (v) => Math.round(v * s);
+
+  // 1. Базова холодна підкладка
+  ctx.fillStyle = '#b2bec3';
+  ctx.fillRect(x, y, size, size);
+
+  // 2. Основне тіло пухкого снігу
+  ctx.fillStyle = '#dff9fb';
+  ctx.fillRect(x + p(1), y + p(1), size - p(2), size - p(2));
+
+  // 3. М'які рельєфні замети світлішого відтінку
+  ctx.fillStyle = '#f5f6fa';
+  ctx.fillRect(x + p(3), y + p(3), size - p(6), size - p(6));
+
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+  ctx.fillRect(x + p(4), y + p(4), p(12), p(8));
+  ctx.fillRect(x + p(16), y + p(14), p(12), p(10));
+  ctx.fillRect(x + p(8), y + p(20), p(10), p(7));
+
+  // 4. Дрібні кристалічні іскорки снігу
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(x + p(6), y + p(7), Math.max(1, p(1.5)), Math.max(1, p(1.5)));
+  ctx.fillRect(x + p(22), y + p(17), Math.max(1, p(1.5)), Math.max(1, p(1.5)));
+  ctx.fillRect(x + p(11), y + p(23), Math.max(1, p(1.5)), Math.max(1, p(1.5)));
+
+  // 5. Тіньові блакитні заглиблення снігового пласта
+  ctx.fillStyle = 'rgba(199, 236, 238, 0.6)';
+  ctx.fillRect(x + p(2), y + size - p(3), size - p(4), p(2));
+  ctx.fillRect(x + size - p(3), y + p(2), p(2), size - p(4));
+
+  ctx.restore();
+}
+
+/**
+ * Рендеринг елемента «Броньоване скло» (TILE_TYPES.ARMORED_GLASS, id: 15)
+ * Монолітний броньований прозорий блок із загартованого скла в сталевій рамі з заклепками
+ */
+export function drawArmoredGlassTile(ctx, x, y, size) {
+  ctx.save();
+  const s = size / 32;
+  const p = (v) => Math.round(v * s);
+
+  // 1. Темна металева рама з броньованої сталі
+  ctx.fillStyle = '#1e272e';
+  ctx.fillRect(x, y, size, size);
+
+  const border = Math.max(2, p(2.5));
+  const innerW = size - border * 2;
+  const innerH = size - border * 2;
+
+  // 2. Внутрішня скошена кромка рами
+  ctx.fillStyle = '#485460';
+  ctx.fillRect(x + border, y + border, innerW, innerH);
+
+  const glassPad = Math.max(3, p(4));
+  const glassW = size - glassPad * 2;
+  const glassH = size - glassPad * 2;
+
+  // 3. Тоноване блакитно-бірюзове броньоване скло
+  ctx.fillStyle = 'rgba(116, 185, 255, 0.45)';
+  ctx.fillRect(x + glassPad, y + glassPad, glassW, glassH);
+
+  // Внутрішня глибина скла
+  ctx.fillStyle = 'rgba(9, 132, 227, 0.25)';
+  ctx.fillRect(x + glassPad + 1, y + glassPad + 1, glassW - 2, glassH - 2);
+
+  // 4. Діагональні відблиски світла на полірованому склі
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.65)';
+  ctx.lineWidth = Math.max(1, p(1.5));
+  ctx.beginPath();
+  ctx.moveTo(x + glassPad + p(2), y + glassPad + glassH - p(4));
+  ctx.lineTo(x + glassPad + glassW - p(4), y + glassPad + p(2));
+  ctx.moveTo(x + glassPad + p(5), y + glassPad + glassH - p(2));
+  ctx.lineTo(x + glassPad + glassW - p(2), y + glassPad + p(5));
+  ctx.stroke();
+
+  // 5. 4 сталеві кутові кронштейни з заклепками
+  const boltSize = Math.max(2, p(2.5));
+  const boltOffset = p(1.5);
+  const corners = [
+    { bx: x + boltOffset, by: y + boltOffset },
+    { bx: x + size - boltOffset - boltSize, by: y + boltOffset },
+    { bx: x + boltOffset, by: y + size - boltOffset - boltSize },
+    { bx: x + size - boltOffset - boltSize, by: y + size - boltOffset - boltSize }
+  ];
+  corners.forEach(pt => {
+    ctx.fillStyle = '#d2dae2';
+    ctx.fillRect(pt.bx, pt.by, boltSize, boltSize);
+    ctx.fillStyle = '#808e9b';
+    ctx.fillRect(pt.bx + 0.5, pt.by + 0.5, boltSize - 1, boltSize - 1);
+  });
+
+  // 6. Тонкий захисний контур армування
+  ctx.strokeStyle = 'rgba(0, 229, 255, 0.4)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + glassPad + 0.5, y + glassPad + 0.5, glassW - 1, glassH - 1);
+
+  ctx.restore();
+}
+
+/**
+ * Рендеринг елемента «Кислота» (TILE_TYPES.ACID, id: 16)
+ * Їдка хімічна токсична калюжа на рівні землі з анімованими бульбашками
+ */
+export function drawAcidTile(ctx, x, y, size, wavePhase = 0) {
+  ctx.save();
+  const s = size / 32;
+  const p = (v) => Math.round(v * s);
+
+  // 1. Темний роз'їдений ґрунт з обпаленими краями
+  ctx.fillStyle = '#0f1419';
+  ctx.fillRect(x, y, size, size);
+
+  // Обпалена облямівка
+  ctx.fillStyle = '#1e382b';
+  ctx.fillRect(x + p(1), y + p(1), size - p(2), size - p(2));
+
+  // 2. Основна яскраво-зелена отруйна кислотна рідина
+  ctx.fillStyle = '#10ac84';
+  ctx.fillRect(x + p(2), y + p(2), size - p(4), size - p(4));
+
+  ctx.fillStyle = '#2ed573';
+  ctx.fillRect(x + p(3), y + p(3), size - p(6), size - p(6));
+
+  // 3. Анімовані їдкі бульбашки
+  const t = (wavePhase * 3) % size;
+  ctx.fillStyle = '#7bed9f';
+  // Бульбашка 1
+  const b1x = x + p(7) + ((t * 1.5) % Math.max(1, p(18)));
+  const b1y = y + p(8);
+  ctx.beginPath();
+  ctx.arc(b1x, b1y, Math.max(1.5, p(2.5)), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(b1x - 0.5, b1y - 0.5, 1, 1);
+
+  // Бульбашка 2
+  ctx.fillStyle = '#7bed9f';
+  const b2x = x + p(20) - ((t * 1.2) % Math.max(1, p(14)));
+  const b2y = y + p(20);
+  ctx.beginPath();
+  ctx.arc(b2x, b2y, Math.max(1, p(2)), 0, Math.PI * 2);
+  ctx.fill();
+
+  // Бульбашка 3
+  const b3x = x + p(14);
+  const b3y = y + p(14) + (Math.sin(wavePhase) * p(2));
+  ctx.beginPath();
+  ctx.arc(b3x, b3y, Math.max(1.5, p(2.5)), 0, Math.PI * 2);
+  ctx.fill();
+
+  // 4. Їдкі випари та світлові плями
+  ctx.fillStyle = 'rgba(46, 213, 115, 0.35)';
+  ctx.fillRect(x + p(4), y + p(4), p(10), p(6));
+  ctx.fillRect(x + p(16), y + p(15), p(11), p(7));
+
+  // 5. Тонкий отруйний контур
+  ctx.strokeStyle = '#26de81';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + p(2) + 0.5, y + p(2) + 0.5, size - p(4) - 1, size - p(4) - 1);
+
+  ctx.restore();
+}
+
+/**
+ * Рендеринг елемента «Бочка з кислотою» (TILE_TYPES.ACID_BARREL, id: 17)
+ * Індустріальна металева бочка токсично-зеленого кольору зі знаком небезпеки та індикаторами HP
+ */
+export function drawAcidBarrelTile(ctx, x, y, size, wavePhase = 0, hp = 3) {
+  ctx.save();
+  const s = size / 32;
+  const p = (v) => Math.round(v * s);
+
+  // 1. Темна індустріальна підкладка
+  ctx.fillStyle = '#1e272e';
+  ctx.fillRect(x, y, size, size);
+
+  const border = Math.max(2, p(2));
+  const w = size - border * 2;
+  const h = size - border * 2;
+
+  // 2. Металевий корпус бочки токсично-зеленого кольору
+  ctx.fillStyle = '#20bf6b';
+  ctx.fillRect(x + border, y + border, w, h);
+
+  // Сталевий обід зверху та знизу
+  ctx.fillStyle = '#2f3542';
+  ctx.fillRect(x + border, y + border, w, p(3));
+  ctx.fillRect(x + border, y + size - border - p(3), w, p(3));
+
+  // Центральне ребро жорсткості бочки
+  const midY = y + Math.floor(size / 2);
+  ctx.fillStyle = '#2f3542';
+  ctx.fillRect(x + border, midY - p(2), w, p(4));
+
+  // 3. Знак токсичності (жовтий трикутник небезпеки)
+  const midX = x + Math.floor(size / 2);
+  ctx.fillStyle = '#f1c40f';
+  ctx.beginPath();
+  ctx.moveTo(midX, midY - p(5));
+  ctx.lineTo(midX + p(5), midY + p(4));
+  ctx.lineTo(midX - p(5), midY + p(4));
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = '#1e272e';
+  ctx.beginPath();
+  ctx.arc(midX, midY - p(0.5), Math.max(1, p(1.5)), 0, Math.PI * 2);
+  ctx.fill();
+
+  // 4. Світлодіодні індикатори міцності (3 HP)
+  const dotR = Math.max(1.5, p(2));
+  const dotSpacing = p(6);
+  const indY = y + size - border - p(1.5);
+
+  // Крапка 1 (1 HP)
+  ctx.fillStyle = hp >= 1 ? '#2ed573' : '#c0392b';
+  ctx.fillRect(midX - dotSpacing - dotR, indY - dotR, dotR * 2, dotR * 2);
+
+  // Крапка 2 (2 HP)
+  ctx.fillStyle = hp >= 2 ? '#2ed573' : '#c0392b';
+  ctx.fillRect(midX - dotR, indY - dotR, dotR * 2, dotR * 2);
+
+  // Крапка 3 (3 HP)
+  ctx.fillStyle = hp >= 3 ? '#2ed573' : '#c0392b';
+  ctx.fillRect(midX + dotSpacing - dotR, indY - dotR, dotR * 2, dotR * 2);
+
+  // 5. Тріщини або витік кислоти при пошкодженні (hp < 3)
+  if (hp === 2) {
+    drawDamageCracks(ctx, x, y, size, 1);
+  } else if (hp === 1) {
+    drawDamageCracks(ctx, x, y, size, 2);
+    // Токсичний патьок кислоти зі шва бочки
+    ctx.fillStyle = '#7bed9f';
+    ctx.fillRect(x + border + p(4), midY + p(2), p(2), p(5));
+  }
+
+  ctx.restore();
+}
+
 // Словник для швидкого пошуку за числовим ID
 export const TILE_BY_ID = {};
 Object.values(TILE_TYPES).forEach(tile => {
@@ -1087,6 +1402,117 @@ export function syncTileRegistry() {
     }
   });
   return TILE_BY_ID;
+}
+
+/**
+ * Перевірка, чи є блок суто візуальною декорацією ґрунту (декоративна трава, дрібне каміння)
+ */
+export function isPureDecorTileId(tileId) {
+  return tileId === 7 || tileId === 11 || tileId === 12 || tileId === 13;
+}
+
+/**
+ * Генерація взаємно однозначної бієкції (деранжування) для події «Обман зору» (shuffled_blocks):
+ * Кожен фізичний ігровий об'єкт отримує унікальні властивості іншого блоку.
+ * Суто візуальні декорації ґрунту виключені з пулу і залишаються самими собою.
+ */
+export function generateTileBijection(tileTypes = TILE_TYPES) {
+  const ids = Object.values(tileTypes)
+    .filter(t => t && typeof t.id === 'number' && t.id !== 0 && !isPureDecorTileId(t.id))
+    .map(t => t.id);
+
+  if (ids.length <= 1) return {};
+
+  const shuffled = [...ids];
+  // Алгоритм Саттоло гарантує єдиний повний цикл перестановки (жоден блок не мапиться сам на себе: f(x) !== x)
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * i);
+    const tmp = shuffled[i];
+    shuffled[i] = shuffled[j];
+    shuffled[j] = tmp;
+  }
+
+  const map = {};
+  for (let i = 0; i < ids.length; i++) {
+    map[ids[i]] = shuffled[i];
+  }
+  return map;
+}
+
+/**
+ * Отримання ефективного ID блоку (з урахуванням підміни властивостей під час події «Обман зору»)
+ */
+export function getEffectiveTileId(tileId, gameState = null) {
+  if (tileId === 0 || !gameState || isPureDecorTileId(tileId)) return tileId;
+  if (gameState.currentMapEvent === 'shuffled_blocks' && gameState.tilePropertyMap) {
+    const mapped = gameState.tilePropertyMap[tileId];
+    return typeof mapped === 'number' ? mapped : tileId;
+  }
+  return tileId;
+}
+
+/**
+ * Отримання конфігурації ефективного блоку за його ID
+ */
+export function getEffectiveTile(tileId, gameState = null) {
+  const effId = getEffectiveTileId(tileId, gameState);
+  return TILE_BY_ID[effId] || TILE_TYPES.EMPTY;
+}
+
+/**
+ * Перевірка, чи діє клітинка (r, c) як високі кущі (маскування, проїзд без перешкод):
+ * Під час події «Обман зору» кущ може перетворитися на стіну/воду, а будь-який інший блок (цегла, бетон) може стати кущем!
+ */
+export function isCellEffectiveHighBush(r, c, gameState = null) {
+  if (!gameState) return false;
+  const hasBush = Boolean(gameState.bushes && gameState.bushes[r] && gameState.bushes[r][c] === 1);
+
+  if (gameState.currentMapEvent === 'shuffled_blocks') {
+    // 1. Якщо на клітинці намальований кущ (ID: 4): він діє як кущ ТІЛЬКИ якщо 4 мапиться на 4
+    if (hasBush && getEffectiveTileId(4, gameState) === 4) {
+      return true;
+    }
+    // 2. Якщо на клітинці інший блок (цегла, бетон, трава тощо): чи перетворився він на кущ (ID: 4)?
+    if (gameState.map && gameState.map[r]) {
+      const mapTileId = gameState.map[r][c];
+      if (mapTileId !== 0 && getEffectiveTileId(mapTileId, gameState) === 4) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Звичайний режим гри
+  return hasBush;
+}
+
+/**
+ * Отримання повної ефективної конфігурації клітинки (r, c) з урахуванням шару карти ТА шару високих кущів
+ */
+export function getEffectiveCellTile(r, c, gameState = null) {
+  if (!gameState) return TILE_TYPES.EMPTY;
+  const hasBush = Boolean(gameState.bushes && gameState.bushes[r] && gameState.bushes[r][c] === 1);
+  const mapTileId = (gameState.map && gameState.map[r]) ? (gameState.map[r][c] || 0) : 0;
+
+  if (gameState.currentMapEvent === 'shuffled_blocks') {
+    if (hasBush) {
+      const effBushTile = getEffectiveTile(4, gameState);
+      // Якщо кущ отримав фізичні перешкоджальні властивості (стіна, бетон, кулі, лід, сніг, вода, низькі кущі) — він пріоритетний!
+      if (effBushTile && (effBushTile.blocksTank || effBushTile.blocksBullet || effBushTile.isLowBush || effBushTile.isIce || effBushTile.isSnow || effBushTile.isWater || effBushTile.slowFactor)) {
+        return effBushTile;
+      }
+    }
+    return getEffectiveTile(mapTileId, gameState);
+  }
+
+  // Якщо на клітинці встановлено блок карти (цегла, камінь, бетон, бочка тощо) — він зберігає всю свою фізику (блокує танки, кулі та отримує шкоду)!
+  if (mapTileId !== 0) {
+    return TILE_BY_ID[mapTileId] || TILE_TYPES.EMPTY;
+  }
+  if (hasBush) {
+    return TILE_TYPES.BUSH;
+  }
+  return TILE_TYPES.EMPTY;
 }
 
 export default TILE_TYPES;
