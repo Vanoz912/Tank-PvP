@@ -804,10 +804,10 @@ header {
   width: 100%;
   background: #14181f;
   border-top: 2px solid #2c3e50;
-  padding: 8px 14px;
+  padding: 9px 14px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
 }
 
 .hp-info-row {
@@ -817,7 +817,7 @@ header {
 }
 
 .hp-badge {
-  font-size: 8px;
+  font-size: 9.5px;
   color: #f1c40f;
   letter-spacing: 0.5px;
   font-weight: bold;
@@ -830,7 +830,7 @@ header {
 }
 
 .hp-text-label {
-  font-size: 9px;
+  font-size: 11.5px;
   color: #2ecc71;
   font-family: monospace;
   font-weight: bold;
@@ -839,11 +839,11 @@ header {
 }
 
 .hp-armor-badge {
-  font-size: 8px;
+  font-size: 10.5px;
   color: #55efc4;
   background: rgba(16, 172, 132, 0.16);
   border: 1px solid #10ac84;
-  padding: 2px 6px;
+  padding: 3px 8px;
   border-radius: 3px;
   font-family: monospace;
   font-weight: bold;
@@ -851,11 +851,11 @@ header {
 }
 
 .hp-ammo-badge {
-  font-size: 8px;
+  font-size: 10.5px;
   color: #ffeaa7;
   background: rgba(243, 156, 18, 0.18);
   border: 1px solid #f39c12;
-  padding: 2px 7px;
+  padding: 3px 8px;
   border-radius: 3px;
   font-family: monospace;
   font-weight: bold;
@@ -871,7 +871,7 @@ header {
 
 .hp-bar-track {
   width: 100%;
-  height: 12px;
+  height: 13px;
   background: #090b0e;
   border: 1px solid #34495e;
   border-radius: 3px;
@@ -904,18 +904,18 @@ header {
   justify-content: space-between;
   align-items: center;
   gap: 6px;
-  margin-top: 2px;
-  padding-top: 4px;
+  margin-top: 3px;
+  padding-top: 5px;
   border-top: 1px dashed rgba(52, 73, 94, 0.7);
 }
 
 .hp-stat-item {
-  font-size: 7.5px;
+  font-size: 10px;
   color: #dfe6e9;
   background: rgba(15, 22, 32, 0.85);
   border: 1px solid #2c3e50;
-  border-radius: 3px;
-  padding: 2px 6px;
+  border-radius: 4px;
+  padding: 4px 8px;
   font-family: monospace;
   font-weight: bold;
   letter-spacing: 0.3px;
@@ -2012,6 +2012,9 @@ header {
 .player-hp-bar-container .hp-mines-badge,
 .player-hp-bar-container .hp-smoke-badge,
 .player-hp-bar-container .hp-artillery-badge,
+.player-hp-bar-container .hp-beacon-badge,
+.player-hp-bar-container .hp-radar-badge,
+.player-hp-bar-container .hp-guided-badge,
 .player-hp-bar-container .hp-active-switch-badge,
 .player-hp-bar-container .hp-repair-badge,
 .player-hp-bar-container .hp-rebirth-badge {
@@ -2380,6 +2383,17 @@ header {
   min-width: 146px;
   flex-shrink: 0;
   box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.75);
+  position: relative;
+  z-index: 20;
+  cursor: zoom-in;
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.22s ease, border-color 0.22s ease;
+}
+
+.map-preview-box:hover {
+  transform: scale(2.85);
+  z-index: 250;
+  border-color: #f1c40f;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.98), 0 0 24px rgba(241, 196, 15, 0.65);
 }
 
 .rematch-map-preview-box {
@@ -2403,10 +2417,153 @@ header {
 }
 
 .map-preview-caption {
-  font-size: 6.8px;
+  font-size: 8px;
+  font-weight: 600;
   color: #95a5a6;
   margin-top: 4px;
   letter-spacing: 0.4px;
+}
+
+.editor-softlock-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fab1a0;
+  background: rgba(235, 77, 75, 0.22);
+  border: 1px solid #eb4d4b;
+  border-radius: 4px;
+  padding: 2px 7px;
+  margin-left: 6px;
+  animation: pulse-badge 2s infinite ease-in-out;
+}
+
+@keyframes pulse-badge {
+  0%, 100% { opacity: 0.95; }
+  50% { opacity: 0.65; }
+}
+
+/* ==========================================
+   V17: GAME MODES CHECKBOXES, CURSES & NEW PERKS
+   ========================================== */
+.game-modes-box {
+  background: #11161f;
+  border: 1.5px solid #2c3e50;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  text-align: left;
+}
+
+.rematch-modes-box {
+  margin-top: 8px;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+}
+
+.game-modes-label {
+  font-size: 8.5px;
+  color: #00d2d3;
+  margin-bottom: 6px;
+  letter-spacing: 0.4px;
+  font-weight: bold;
+}
+
+.game-modes-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mode-checkbox-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #18202c;
+  border: 1.5px solid #34495e;
+  border-radius: 5px;
+  padding: 5px 9px;
+  font-size: 8px;
+  color: #ecf0f1;
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mode-checkbox-pill:hover {
+  border-color: #00d2d3;
+}
+
+.mode-checkbox-pill input[type="checkbox"] {
+  accent-color: #00d2d3;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.mode-checkbox-pill:has(input:checked) {
+  border-color: #00d2d3;
+  background: rgba(0, 210, 211, 0.14);
+  box-shadow: 0 0 8px rgba(0, 210, 211, 0.25);
+}
+
+.mode-checkbox-pill.mode-stub-pill {
+  opacity: 0.82;
+}
+
+.mode-checkbox-pill small {
+  font-size: 6.5px;
+  color: #95a5a6;
+}
+
+/* Прокляті картки здібностей після раунду */
+.perk-card.perk-card-cursed {
+  border-color: #ff4757 !important;
+  box-shadow: 0 0 16px rgba(255, 71, 87, 0.55), inset 0 0 12px rgba(255, 71, 87, 0.22) !important;
+}
+
+.perk-curse-badge {
+  margin-top: 6px;
+  padding: 5px 7px;
+  border-radius: 5px;
+  background: rgba(192, 57, 43, 0.28);
+  border: 1.5px dashed #ff4757;
+  color: #ff6b81;
+  font-size: 7.5px;
+  line-height: 1.35;
+  text-align: center;
+  font-weight: bold;
+  box-shadow: 0 0 8px rgba(255, 71, 87, 0.3);
+}
+
+/* Прокляття у лівій бічній панелі та в каталозі Полігону / Механік */
+.sidebar-perk-pill.curse-pill {
+  border-color: #ff4757 !important;
+  background: linear-gradient(135deg, rgba(74, 16, 26, 0.95), rgba(24, 14, 20, 0.96)) !important;
+  box-shadow: 0 0 8px rgba(255, 71, 87, 0.35);
+}
+
+.sidebar-perk-pill.curse-pill .sidebar-perk-title {
+  color: #ff6b81;
+}
+
+.curse-stack-badge {
+  background: #6f1e26 !important;
+  color: #ffcdd2 !important;
+  border-color: #ff4757 !important;
+}
+
+.test-perk-chip.test-curse-chip,
+.curse-mechanics-card {
+  border-color: rgba(255, 71, 87, 0.95) !important;
+  background: linear-gradient(135deg, rgba(255, 71, 87, 0.18), rgba(19, 25, 34, 0.96)) !important;
+  box-shadow: inset 0 0 8px rgba(255, 71, 87, 0.18);
+}
+
+.test-perk-chip.test-curse-chip .test-perk-chip-title {
+  color: #ff6b81 !important;
 }
 
 /* Каталог вибору блоків у Редакторі Карт (як у Полігоні) */
@@ -2502,5 +2659,264 @@ header {
   border-color: #ffeaa7;
 }
 
+/* Ability Ready Toast Notifications */
+.ability-toast-container {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+  z-index: 95;
+}
 
+.ability-toast-item {
+  background: rgba(16, 22, 30, 0.94);
+  color: #fff;
+  border: 1.5px solid #00e5ff;
+  border-left: 4px solid #00e5ff;
+  padding: 8px 14px;
+  border-radius: 5px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.6), 0 0 10px rgba(0, 229, 255, 0.3);
+  font-family: var(--font-arcade);
+  font-size: 8.5px;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(120%);
+  opacity: 0;
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s ease;
+}
 
+.ability-toast-item.show {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.ability-toast-item.hide {
+  transform: translateY(-20px);
+  opacity: 0;
+}
+
+.ability-toast-icon {
+  font-size: 13px;
+}
+
+.test-event-select {
+  background: #111822;
+  color: #00e5ff;
+  border: 1.5px solid #00e5ff;
+  padding: 4px 8px;
+  font-size: 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--font-arcade);
+}
+
+/* ==========================================
+   LOBBY ROOM & BROWSER STYLES
+   ========================================== */
+.btn-lobbies-open {
+  background: #00d2d3;
+  color: #000;
+  box-shadow: 4px 4px 0 #000;
+  margin-bottom: 8px;
+}
+.btn-lobbies-open:hover {
+  background: #01a3a4;
+}
+
+/* Browser View */
+.lobbies-browser-header {
+  border-bottom: 2px solid #34495e;
+  margin-bottom: 12px;
+  padding-bottom: 4px;
+}
+.active-lobbies-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin-bottom: 14px;
+}
+.lobby-card-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #111;
+  border: 2px solid #34495e;
+  border-radius: 6px;
+  padding: 10px 12px;
+  gap: 8px;
+}
+.lobby-card-item:hover {
+  border-color: #00d2d3;
+  background: #161b22;
+}
+.lobby-card-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.lobby-card-name {
+  font-size: 10px;
+  font-weight: bold;
+  color: #f1c40f;
+}
+.lobby-card-sub {
+  font-size: 8px;
+  color: #bdc3c7;
+}
+.lobby-empty-placeholder {
+  text-align: center;
+  font-size: 9px;
+  color: #7f8c8d;
+  padding: 24px 0;
+  border: 1px dashed #444;
+  border-radius: 4px;
+}
+.lobbies-browser-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Dedicated Lobby Room View */
+.lobby-room-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #34495e;
+}
+.lobby-room-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.lobby-role-pill {
+  font-size: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #34495e;
+  color: #f1c40f;
+  font-family: var(--font-arcade);
+}
+
+.lobby-settings-box {
+  background: #161616;
+  border: 2px solid #f39c12;
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 14px;
+}
+
+.lobby-slots-container {
+  margin-bottom: 12px;
+}
+.lobby-slots-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+.lobby-slot-card {
+  background: #141414;
+  border: 2px solid #444;
+  border-radius: 6px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  transition: border-color 0.2s;
+}
+.lobby-slot-card.slot-team-1 { border-color: #f1c40f; }
+.lobby-slot-card.slot-team-2 { border-color: #2ecc71; }
+.lobby-slot-card.slot-team-3 { border-color: #00d2d3; }
+.lobby-slot-card.slot-team-4 { border-color: #e056fd; }
+.lobby-slot-card.slot-empty {
+  border-style: dashed;
+  border-color: #555;
+  background: #0d0d0d;
+}
+
+.lobby-slot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 9px;
+  font-weight: bold;
+}
+.lobby-slot-ready-badge {
+  font-size: 7px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-family: var(--font-arcade);
+}
+.ready-yes {
+  background: #27ae60;
+  color: #fff;
+}
+.ready-no {
+  background: #e67e22;
+  color: #fff;
+}
+
+.team-pill-group {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.team-pill {
+  flex: 1;
+  min-width: 42px;
+  padding: 5px 4px;
+  font-size: 8px;
+  font-family: var(--font-arcade);
+  background: #222;
+  border: 1px solid #555;
+  color: #fff;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.team-pill:hover { background: #333; }
+.team-pill.active.team-1 { background: #f1c40f; color: #000; border-color: #f1c40f; font-weight: bold; }
+.team-pill.active.team-2 { background: #2ecc71; color: #000; border-color: #2ecc71; font-weight: bold; }
+.team-pill.active.team-3 { background: #00d2d3; color: #000; border-color: #00d2d3; font-weight: bold; }
+.team-pill.active.team-4 { background: #e056fd; color: #000; border-color: #e056fd; font-weight: bold; }
+
+.btn-add-bot-disabled {
+  background: #2c3e50;
+  opacity: 0.55;
+  cursor: not-allowed;
+  font-size: 8px;
+  padding: 8px;
+  border: 1px dashed #7f8c8d;
+  color: #bdc3c7;
+  border-radius: 4px;
+  text-align: center;
+}
+
+.lobby-validation-warning {
+  padding: 8px 10px;
+  background: rgba(231, 76, 60, 0.15);
+  border: 1px solid #e74c3c;
+  color: #e74c3c;
+  font-size: 8px;
+  border-radius: 4px;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.lobby-room-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
